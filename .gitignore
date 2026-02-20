@@ -1,0 +1,33 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+.pytest_cache/
+*.so
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Data / storage
+qdrant_storage/
+test_videos/
+
+# Reference code (read-only, not ours)
+existing_code/
+
+# Misc
+.DS_Store
+*.log
+.env
+.env.*
+*.swp
+*.swo

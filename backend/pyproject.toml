@@ -1,0 +1,59 @@
+[project]
+name = "trackletviz-backend"
+version = "0.1.0"
+description = "TrackletViz indexing pipeline and FastAPI backend"
+requires-python = ">=3.11"
+dependencies = [
+    # PyTorch — install with CUDA support via uv's index-url override
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    # Detection & tracking
+    "ultralytics>=8.1.0",
+    "boxmot>=10.0.0",
+    # Vector database
+    "qdrant-client>=1.8.0",
+    # Dimensionality reduction & clustering
+    "umap-learn>=0.5.6",
+    "hdbscan>=0.8.33",
+    # API
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    # Vision
+    "opencv-python>=4.9.0.80",
+    "Pillow>=10.3.0",
+    # Data
+    "numpy>=1.26.0",
+    "pydantic>=2.6.0",
+    # Config & logging
+    "pyyaml>=6.0.1",
+    "loguru>=0.7.2",
+    # HTTP client (for health checks)
+    "httpx>=0.27.0",
+    # VideoPrism dependencies (JAX-based)
+    "einops>=0.7.0",
+    "flax>=0.8.0",
+    "optax>=0.2.0",
+    "dm-haiku>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "ipython",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["indexer", "api", "models"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
