@@ -1,3 +1,4 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Konva from "konva";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image as KonvaImage, Layer, Line, Rect, Stage } from "react-konva";
@@ -75,6 +76,109 @@ function findBoxAtTime(boxes: BoundingBox[], time: number): BoundingBox | null {
     }
   }
   return best;
+}
+
+const CARD_HEIGHT = 84; // px — estimated fixed height per card
+
+function TrackCardList({
+  tracklets,
+  selectedTrackletId,
+  maxSpeed,
+  onTrackClick,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  tracklets: TrackletMetadata[];
+  selectedTrackletId: string | null;
+  maxSpeed: number;
+  onTrackClick: (t: TrackletMetadata) => void;
+  onMouseEnter: (id: string) => void;
+  onMouseLeave: () => void;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: tracklets.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => CARD_HEIGHT,
+    overscan: 5,
+  });
+
+  if (tracklets.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-xs text-gray-500 text-center py-4">
+          No tracks match current filters
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={parentRef} className="flex-1 overflow-y-auto">
+      <div
+        style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}
+        className="px-2 py-1"
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const t = tracklets[virtualRow.index];
+          const isSelected = t.tracklet_id === selectedTrackletId;
+          return (
+            <div
+              key={t.tracklet_id}
+              style={{
+                position: "absolute",
+                top: virtualRow.start,
+                left: 0,
+                right: 0,
+                padding: "0 4px 6px",
+              }}
+            >
+              <button
+                onClick={() => onTrackClick(t)}
+                onMouseEnter={() => onMouseEnter(t.tracklet_id)}
+                onMouseLeave={onMouseLeave}
+                className={`w-full text-left rounded-lg p-2 transition-colors cursor-pointer ${
+                  isSelected
+                    ? "bg-blue-600/20 border border-blue-500"
+                    : "bg-gray-800/60 border border-gray-700 hover:border-gray-500"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: getClassColorHex(t.class_name) }}
+                  />
+                  <span className="text-xs font-medium capitalize text-gray-200 truncate">
+                    {t.class_name}
+                  </span>
+                  <span className="text-[10px] text-gray-500 ml-auto font-mono">
+                    #{t.tracklet_id}
+                  </span>
+                </div>
+                <div className="mb-1.5 rounded overflow-hidden bg-gray-900/50 px-1 py-0.5">
+                  <SpeedSparkline points={t.bounding_boxes} maxSpeed={maxSpeed} />
+                </div>
+                <div className="flex gap-3 text-[10px] text-gray-400">
+                  <span>
+                    {t.avg_speed.toFixed(1)}{" "}
+                    <span className="text-gray-500">px/s</span>
+                  </span>
+                  <span>
+                    {t.duration.toFixed(1)}
+                    <span className="text-gray-500">s</span>
+                  </span>
+                  <span>
+                    {t.point_count} <span className="text-gray-500">pts</span>
+                  </span>
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function TrackListTab({ selectedTracklets }: Props) {
@@ -570,62 +674,15 @@ export default function TrackListTab({ selectedTracklets }: Props) {
           />
         </div>
 
-        {/* Track cards */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-          {filteredTracklets.length === 0 && (
-            <p className="text-xs text-gray-500 text-center py-4">
-              No tracks match current filters
-            </p>
-          )}
-          {filteredTracklets.map((t) => {
-            const isSelected = t.tracklet_id === selectedTrackletId;
-            return (
-              <button
-                key={t.tracklet_id}
-                onClick={() => handleTrackClick(t)}
-                onMouseEnter={() => setHighlightedTrackletId(t.tracklet_id)}
-                onMouseLeave={() => setHighlightedTrackletId(null)}
-                className={`w-full text-left rounded-lg p-2 transition-colors cursor-pointer ${
-                  isSelected
-                    ? "bg-blue-600/20 border border-blue-500"
-                    : "bg-gray-800/60 border border-gray-700 hover:border-gray-500"
-                }`}
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: getClassColorHex(t.class_name) }}
-                  />
-                  <span className="text-xs font-medium capitalize text-gray-200 truncate">
-                    {t.class_name}
-                  </span>
-                  <span className="text-[10px] text-gray-500 ml-auto font-mono">
-                    #{t.tracklet_id}
-                  </span>
-                </div>
-                <div className="mb-1.5 rounded overflow-hidden bg-gray-900/50 px-1 py-0.5">
-                  <SpeedSparkline
-                    points={t.bounding_boxes}
-                    maxSpeed={maxSpeed}
-                  />
-                </div>
-                <div className="flex gap-3 text-[10px] text-gray-400">
-                  <span>
-                    {t.avg_speed.toFixed(1)}{" "}
-                    <span className="text-gray-500">px/s</span>
-                  </span>
-                  <span>
-                    {t.duration.toFixed(1)}
-                    <span className="text-gray-500">s</span>
-                  </span>
-                  <span>
-                    {t.point_count} <span className="text-gray-500">pts</span>
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        {/* Track cards — virtualised to stay smooth with thousands of items */}
+        <TrackCardList
+          tracklets={filteredTracklets}
+          selectedTrackletId={selectedTrackletId}
+          maxSpeed={maxSpeed}
+          onTrackClick={handleTrackClick}
+          onMouseEnter={(id) => setHighlightedTrackletId(id)}
+          onMouseLeave={() => setHighlightedTrackletId(null)}
+        />
       </div>
     </div>
   );

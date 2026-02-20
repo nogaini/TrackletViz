@@ -28,7 +28,7 @@ function AppContent() {
 
   const { data: videos } = useVideos();
   const { data: videoMetadata } = useVideoMetadata(selectedVideoId);
-  const { data: tracklets } = useTracklets(selectedVideoId);
+  const { data: tracklets } = useTracklets(selectedVideoId, videoMetadata?.total_tracklets);
 
   useEffect(() => {
     if (videos) setVideos(videos);

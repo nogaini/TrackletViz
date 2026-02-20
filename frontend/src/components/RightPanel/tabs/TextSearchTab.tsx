@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useStore } from '../../../stores/useStore';
 import { videoStreamUrl, searchText } from '../../../lib/api';
 import { BBOX_COLOR } from '../../../lib/colors';
+import LazyThumbnail from '../../shared/LazyThumbnail';
 import type { SearchResult, TrackletMetadata } from '../../../types/index';
 
 function TrackletModal({ tracklet, onClose }: { tracklet: TrackletMetadata; onClose: () => void }) {
@@ -174,17 +175,12 @@ export default function TextSearchTab() {
                   onMouseLeave={handleThumbMouseLeave}
                   className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-500 rounded-lg p-1 text-left transition-colors"
                 >
-                  {r.tracklet.thumbnail_base64 ? (
-                    <img
-                      src={`data:image/jpeg;base64,${r.tracklet.thumbnail_base64}`}
-                      alt={r.tracklet.class_name}
-                      className="w-full h-auto rounded"
-                    />
-                  ) : (
-                    <div className="w-full aspect-square bg-gray-700 rounded flex items-center justify-center">
-                      <span className="text-gray-500 text-[8px]">No image</span>
-                    </div>
-                  )}
+                  <LazyThumbnail
+                    trackletId={r.tracklet.tracklet_id}
+                    srcOverride={r.tracklet.thumbnail_base64}
+                    className="w-full h-auto rounded"
+                    alt={r.tracklet.class_name}
+                  />
                 </button>
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-10 hidden group-hover:block bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] text-gray-200 whitespace-nowrap pointer-events-none shadow-lg">
                   <span className="capitalize">{r.tracklet.class_name}</span>

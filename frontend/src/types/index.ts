@@ -25,7 +25,7 @@ export interface TrackletMetadata {
   avg_speed: number;
   max_speed: number;
   point_count: number;
-  thumbnail_base64: string;
+  thumbnail_base64?: string;
   cluster_id: number;
   umap_x: number;
   umap_y: number;

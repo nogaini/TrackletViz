@@ -13,6 +13,7 @@
     "@deck.gl/layers": "^9.2.8",
     "@deck.gl/react": "^9.2.8",
     "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-virtual": "^3.13.18",
     "deck.gl": "^9.2.8",
     "konva": "^10.2.0",
     "lucide-react": "^0.574.0",

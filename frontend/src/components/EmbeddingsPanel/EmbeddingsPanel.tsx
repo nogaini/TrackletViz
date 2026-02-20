@@ -6,6 +6,7 @@ import { Lasso, MousePointer2, Square } from 'lucide-react';
 import { useStore } from '../../stores/useStore';
 import { getClassColor, getClusterColor, getClassColorHex, getClusterColorHex, timeToColor } from '../../lib/colors';
 import { pointInPolygon } from '../../lib/utils';
+import { useThumbnail } from '../shared/LazyThumbnail';
 import type { TrackletMetadata } from '../../types/index';
 
 interface ViewState {
@@ -31,6 +32,12 @@ export default function EmbeddingsPanel() {
 
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+
+  // Lazily fetch the thumbnail for the currently hovered tracklet
+  const hoverThumbnail = useThumbnail(
+    hoverInfo?.tracklet.thumbnail_base64 ? null : (hoverInfo?.tracklet.tracklet_id ?? null),
+  );
+  const tooltipThumb = hoverInfo?.tracklet.thumbnail_base64 ?? hoverThumbnail;
 
   // Selection shapes stored in WORLD coordinates so they survive zoom changes
   const [lassoPointsWorld, setLassoPointsWorld] = useState<[number, number][]>([]);
@@ -468,17 +475,23 @@ export default function EmbeddingsPanel() {
       )}
 
       {/* Thumbnail tooltip */}
-      {hoverInfo && hoverInfo.tracklet.thumbnail_base64 && (
+      {hoverInfo && (
         <div
           className="absolute z-20 pointer-events-none"
           style={{ left: hoverInfo.x + 14, top: hoverInfo.y - 14 }}
         >
           <div className="bg-gray-900 border border-gray-600 rounded-lg p-1.5 shadow-xl">
-            <img
-              src={`data:image/jpeg;base64,${hoverInfo.tracklet.thumbnail_base64}`}
-              alt="tracklet thumbnail"
-              className="w-24 h-24 object-cover rounded"
-            />
+            {tooltipThumb ? (
+              <img
+                src={`data:image/jpeg;base64,${tooltipThumb}`}
+                alt="tracklet thumbnail"
+                className="w-24 h-24 object-cover rounded"
+              />
+            ) : (
+              <div className="w-24 h-24 bg-gray-700 rounded flex items-center justify-center">
+                <span className="text-[10px] text-gray-500">…</span>
+              </div>
+            )}
             <p className="text-[10px] text-gray-400 mt-1 capitalize text-center">
               {hoverInfo.tracklet.class_name}
             </p>

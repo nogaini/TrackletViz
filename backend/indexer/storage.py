@@ -267,18 +267,76 @@ class QdrantStorage:
             return None
         return results[0].payload
 
-    def get_tracklets_for_video(self, video_id: str) -> List[dict]:
+    def get_tracklets_for_video(
+        self,
+        video_id: str,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        include_thumbnails: bool = False,
+    ) -> List[dict]:
         """
-        Retrieve all tracklet payloads for a given video.
+        Retrieve tracklet payloads for a given video.
 
-        Handles large collections by paginating with Qdrant scroll API.
+        When *limit* is None, all tracklets are returned (full internal
+        pagination via Qdrant scroll).  When *limit* is set, at most *limit*
+        tracklets are returned starting from *offset* (0-based).
+
+        ``include_thumbnails=False`` strips the ``thumbnail_base64`` field from
+        every returned payload to keep the response size manageable for large
+        videos.
         """
         tc = self.config.tracklets_collection
+
+        def _strip(payload: dict) -> dict:
+            if not include_thumbnails:
+                payload = dict(payload)
+                payload.pop("thumbnail_base64", None)
+            return payload
+
+        if limit is not None:
+            # Single Qdrant scroll page with the requested window.
+            # Qdrant's scroll offset is a point-ID cursor, not an integer, so
+            # we implement integer offset by skipping earlier pages ourselves.
+            # For reasonable offsets (<500K) this is fast enough.
+            qdrant_page = 500
+            collected: List[dict] = []
+            qdrant_cursor = None
+            skipped = 0
+
+            while True:
+                fetch = min(qdrant_page, offset + limit - len(collected) + qdrant_page)
+                results, qdrant_cursor = self.client.scroll(
+                    collection_name=tc,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="video_id", match=MatchValue(value=video_id))]
+                    ),
+                    with_payload=True,
+                    with_vectors=False,
+                    limit=fetch,
+                    offset=qdrant_cursor,
+                )
+
+                for point in results:
+                    if point.payload is None:
+                        continue
+                    if skipped < offset:
+                        skipped += 1
+                        continue
+                    collected.append(_strip(point.payload))
+                    if len(collected) >= limit:
+                        return collected
+
+                if qdrant_cursor is None:
+                    break
+
+            return collected
+
+        # limit is None → return everything
         all_payloads: List[dict] = []
-        offset = None
+        qdrant_cursor = None
 
         while True:
-            results, next_offset = self.client.scroll(
+            results, qdrant_cursor = self.client.scroll(
                 collection_name=tc,
                 scroll_filter=Filter(
                     must=[FieldCondition(key="video_id", match=MatchValue(value=video_id))]
@@ -286,17 +344,32 @@ class QdrantStorage:
                 with_payload=True,
                 with_vectors=False,
                 limit=500,
-                offset=offset,
+                offset=qdrant_cursor,
             )
             for point in results:
                 if point.payload:
-                    all_payloads.append(point.payload)
+                    all_payloads.append(_strip(point.payload))
 
-            if next_offset is None:
+            if qdrant_cursor is None:
                 break
-            offset = next_offset
 
         return all_payloads
+
+    def get_tracklet_thumbnail(self, tracklet_id: str) -> Optional[str]:
+        """
+        Return the ``thumbnail_base64`` string for a single tracklet, or None
+        if the tracklet does not exist.
+        """
+        tc = self.config.tracklets_collection
+        point_id = _make_point_id(tracklet_id)
+        results = self.client.retrieve(
+            collection_name=tc,
+            ids=[point_id],
+            with_payload=["thumbnail_base64"],
+        )
+        if not results:
+            return None
+        return (results[0].payload or {}).get("thumbnail_base64")
 
     def get_video_id_by_tag(self, tag: str) -> Optional[str]:
         """Look up the video_id for a video with the given tag. Returns None if not found."""

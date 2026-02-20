@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { videoStreamUrl } from "../../../lib/api";
 import { getClusterColorHex, BBOX_COLOR, speedToColor } from "../../../lib/colors";
 import { useStore } from "../../../stores/useStore";
+import LazyThumbnail from "../../shared/LazyThumbnail";
 import type { TrackletMetadata } from "../../../types/index";
 
 interface Props {
@@ -245,19 +246,12 @@ export default function ClusterSummariesTab({
                         }}
                         onClick={() => setModal({ tracklet: t })}
                       >
-                        {t.thumbnail_base64 ? (
-                          <img
-                            src={`data:image/jpeg;base64,${t.thumbnail_base64}`}
-                            alt={t.class_name}
-                            className="w-14 h-14 object-cover"
-                          />
-                        ) : (
-                          <div className="w-14 h-14 bg-gray-700 flex items-center justify-center">
-                            <span className="text-[10px] text-gray-400">
-                              No img
-                            </span>
-                          </div>
-                        )}
+                        <LazyThumbnail
+                          trackletId={t.tracklet_id}
+                          srcOverride={t.thumbnail_base64}
+                          className="w-14 h-14 object-cover"
+                          alt={t.class_name}
+                        />
                       </button>
                     ))}
                   </div>
