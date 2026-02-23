@@ -9,6 +9,8 @@ import { pointInPolygon } from '../../lib/utils';
 import { useThumbnail } from '../shared/LazyThumbnail';
 import type { TrackletMetadata } from '../../types/index';
 
+const HIGHLIGHT_COLOR: [number, number, number, number] = [255, 255, 255, 255];
+
 interface ViewState {
   target: [number, number, number];
   zoom: number;
@@ -147,13 +149,15 @@ export default function EmbeddingsPanel() {
           const isHighlightedCluster =
             highlightedClusterId !== null && d.cluster_id === highlightedClusterId;
           const isHighlightedTracklet = d.tracklet_id === highlightedTrackletId;
+          // Highlighted tracklet: always show as pure white regardless of color mode
+          if (isHighlightedTracklet) return HIGHLIGHT_COLOR;
           let alpha = 220;
           if (hasSelection && !isSelected) alpha = Math.min(alpha, 40);
-          if (isHighlightedCluster || isHighlightedTracklet) alpha = 255;
+          if (isHighlightedCluster) alpha = 255;
           return [r, g, b, alpha];
         },
         getRadius: (d: TrackletMetadata): number => {
-          if (d.tracklet_id === highlightedTrackletId) return 8;
+          if (d.tracklet_id === highlightedTrackletId) return 14;
           if (highlightedClusterId !== null && d.cluster_id === highlightedClusterId) return 6;
           return 4;
         },

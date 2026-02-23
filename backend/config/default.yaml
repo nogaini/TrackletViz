@@ -30,8 +30,8 @@ clustering:
     n_components: 2 # Output dimensionality (always 2 for viz)
     random_state: 42
   hdbscan:
-    min_cluster_size: 2
-    min_samples: 1 # Controls noise sensitivity
+    min_cluster_size: 15
+    min_samples: 3 # Controls noise sensitivity
     metric: euclidean # Applied on original high-dim embeddings
     cluster_selection_method: eom
   fps_representatives: 5 # Number of FPS representatives per cluster

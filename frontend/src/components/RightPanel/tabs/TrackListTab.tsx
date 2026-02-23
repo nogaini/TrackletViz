@@ -1,7 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Konva from "konva";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image as KonvaImage, Layer, Line, Rect, Stage } from "react-konva";
+import { Image as KonvaImage, Layer, Shape, Rect, Stage } from "react-konva";
 import { videoStreamUrl } from "../../../lib/api";
 import { getClassColorHex, speedToColorHex } from "../../../lib/colors";
 import { useStore } from "../../../stores/useStore";
@@ -65,14 +65,35 @@ function SpeedSparkline({
 }
 
 function findBoxAtTime(boxes: BoundingBox[], time: number): BoundingBox | null {
-  if (boxes.length === 0) return null;
-  let best = boxes[0];
-  let bestDiff = Math.abs(boxes[0].timestamp - time);
-  for (const b of boxes) {
-    const d = Math.abs(b.timestamp - time);
-    if (d < bestDiff) {
-      bestDiff = d;
-      best = b;
+  if (!boxes || boxes.length === 0) return null;
+  let lo = 0, hi = boxes.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (boxes[mid].timestamp < time) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(boxes[lo - 1].timestamp - time) <= Math.abs(boxes[lo].timestamp - time))
+    return boxes[lo - 1];
+  return boxes[lo];
+}
+
+function findNearestTracklet(
+  tracklets: TrackletMetadata[],
+  vx: number,
+  vy: number,
+  radiusPx: number,
+): TrackletMetadata | null {
+  let best: TrackletMetadata | null = null;
+  let bestDist = radiusPx * radiusPx;
+  for (const t of tracklets) {
+    for (const box of t.bounding_boxes) {
+      const dx = box.center_x - vx;
+      const dy = box.center_y - vy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestDist) {
+        bestDist = d2;
+        best = t;
+      }
     }
   }
   return best;
@@ -102,6 +123,7 @@ function TrackCardList({
     getScrollElement: () => parentRef.current,
     estimateSize: () => CARD_HEIGHT,
     overscan: 5,
+    measureElement: (el) => el.getBoundingClientRect().height,
   });
 
   if (tracklets.length === 0) {
@@ -126,6 +148,8 @@ function TrackCardList({
           return (
             <div
               key={t.tracklet_id}
+              ref={rowVirtualizer.measureElement}
+              data-index={virtualRow.index}
               style={{
                 position: "absolute",
                 top: virtualRow.start,
@@ -197,12 +221,6 @@ export default function TrackListTab({ selectedTracklets }: Props) {
   const [canvasSize, setCanvasSize] = useState({ w: 1, h: 1 });
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
-  const [tooltip, setTooltip] = useState<{
-    x: number;
-    y: number;
-    id: string;
-  } | null>(null);
-
   // Video playback
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
@@ -441,76 +459,57 @@ export default function TrackListTab({ selectedTracklets }: Props) {
     });
   }, []);
 
-  // Render track lines
-  const trackLines = useMemo(() => {
-    return filteredTracklets.flatMap((t) => {
-      const isSelected = t.tracklet_id === selectedTrackletId;
-      const opacity = selectedTrackletId == null ? 0.85 : isSelected ? 1 : 0.15;
-      const strokeW = (isSelected ? 1 : 0.5) / scaleFactor;
-
-      // Speed-colored segments
-      const elements = [];
-      for (let i = 0; i < t.bounding_boxes.length - 1; i++) {
-        const p = t.bounding_boxes[i];
-        const q = t.bounding_boxes[i + 1];
-        const speed = ((p.speed || 0) + (q.speed || 0)) / 2;
-        elements.push(
-          <Line
-            key={`${t.tracklet_id}-${i}`}
-            points={[
-              p.center_x * scaleFactor,
-              p.center_y * scaleFactor,
-              q.center_x * scaleFactor,
-              q.center_y * scaleFactor,
-            ]}
-            stroke={speedToColorHex(speed, maxSpeed)}
-            strokeWidth={strokeW}
-            opacity={opacity}
-            lineCap="round"
-            hitStrokeWidth={10 / scaleFactor}
-            onMouseEnter={(e: Konva.KonvaEventObject<MouseEvent>) =>
-              setTooltip({
-                x: e.evt.clientX,
-                y: e.evt.clientY,
-                id: t.tracklet_id,
-              })
-            }
-            onMouseLeave={() => setTooltip(null)}
-            onClick={() => handleTrackClick(t)}
-          />,
-        );
+  // Draw all track lines imperatively into a single canvas — avoids creating
+  // thousands of React/Konva elements which would freeze the reconciler.
+  const drawTrackLines = useCallback(
+    (ctx: Konva.Context) => {
+      const native = (ctx as any)._context as CanvasRenderingContext2D;
+      native.save();
+      for (const t of filteredTracklets) {
+        const isSelected = t.tracklet_id === selectedTrackletId;
+        const opacity = selectedTrackletId === null ? 0.85 : isSelected ? 1 : 0.15;
+        const strokeW = (isSelected ? 1 : 0.5) / scaleFactor;
+        native.globalAlpha = opacity;
+        native.lineWidth = strokeW;
+        native.lineCap = "round";
+        for (let i = 0; i < t.bounding_boxes.length - 1; i++) {
+          const p = t.bounding_boxes[i];
+          const q = t.bounding_boxes[i + 1];
+          const speed = ((p.speed || 0) + (q.speed || 0)) / 2;
+          native.strokeStyle = speedToColorHex(speed, maxSpeed);
+          native.beginPath();
+          native.moveTo(p.center_x * scaleFactor, p.center_y * scaleFactor);
+          native.lineTo(q.center_x * scaleFactor, q.center_y * scaleFactor);
+          native.stroke();
+        }
       }
-      return elements;
-    });
-  }, [
-    filteredTracklets,
-    selectedTrackletId,
-    scaleFactor,
-    maxSpeed,
-    handleTrackClick,
-  ]);
+      native.globalAlpha = 1;
+      native.restore();
+    },
+    [filteredTracklets, selectedTrackletId, scaleFactor, maxSpeed],
+  );
 
   const selectedTrackMeta = selectedTrackletId
     ? selectedTracklets.find((t) => t.tracklet_id === selectedTrackletId)
     : null;
 
-  if (selectedTracklets.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <p className="text-gray-500 text-sm">
-          Select tracklets in the scatter plot to begin.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Top half: video + track line overlay */}
+      <div className="h-1/2 flex shrink-0 overflow-hidden">
+
+      {/* Stage container — takes remaining width */}
       <div
         ref={containerRef}
-        className="h-1/2 relative overflow-hidden shrink-0"
+        className="flex-1 relative overflow-hidden"
       >
+        {selectedTracklets.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 bg-gray-900/60">
+            <p className="text-gray-400 text-sm">
+              Select tracklets in the scatter plot to begin.
+            </p>
+          </div>
+        )}
         {/* Hidden video element — drawn into Konva bgLayer via KonvaImage */}
         <video
           ref={handleVideoRef}
@@ -534,7 +533,18 @@ export default function TrackListTab({ selectedTracklets }: Props) {
             setStagePos({ x: e.target.x(), y: e.target.y() })
           }
           onClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
-            if (e.target === e.target.getStage()) {
+            const stage = e.target.getStage();
+            if (!stage) return;
+            const pos = stage.getPointerPosition();
+            if (!pos) return;
+            // Convert from stage container coords to video-pixel coords
+            const videoX = (pos.x - stagePos.x) / stageScale / scaleFactor;
+            const videoY = (pos.y - stagePos.y) / stageScale / scaleFactor;
+            const HIT_RADIUS = 20 / stageScale;
+            const found = findNearestTracklet(filteredTracklets, videoX, videoY, HIT_RADIUS);
+            if (found) {
+              handleTrackClick(found);
+            } else {
               setSelectedTrackletId(null);
               stopPlayback();
             }
@@ -563,57 +573,40 @@ export default function TrackListTab({ selectedTracklets }: Props) {
               visible={false}
             />
           </Layer>
-          <Layer>{trackLines}</Layer>
+          <Layer listening={false}>
+            <Shape listening={false} sceneFunc={drawTrackLines} />
+          </Layer>
         </Stage>
 
-        {/* Speed colormap legend */}
-        <div className="absolute bottom-2 right-2 z-10 bg-gray-900/80 backdrop-blur rounded-lg p-2">
-          <div className="text-xs text-gray-400 mb-1">Speed</div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-gray-400">0</span>
-            <div
-              className="w-24 h-2.5 rounded"
-              style={{
-                background:
-                  "linear-gradient(to right, rgb(59,130,246), rgb(6,182,212), rgb(34,197,94), rgb(234,179,8), rgb(239,68,68))",
-              }}
-            />
-            <span className="text-[10px] text-gray-400">
-              {maxSpeed.toFixed(0)} px/s
-            </span>
-          </div>
-        </div>
+      </div>
 
-        {tooltip && (
-          <div
-            className="fixed z-50 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 shadow-xl pointer-events-none"
-            style={{ left: tooltip.x + 12, top: tooltip.y - 10 }}
-          >
-            {(() => {
-              const t = selectedTracklets.find(
-                (tr) => tr.tracklet_id === tooltip.id,
-              );
-              if (!t) return null;
-              return (
-                <div className="text-xs space-y-0.5">
-                  <p className="text-white font-medium capitalize">
-                    {t.class_name}
-                  </p>
-                  <p className="text-gray-400">
-                    Avg speed:{" "}
-                    <span className="text-white">
-                      {t.avg_speed.toFixed(1)} px/s
-                    </span>
-                  </p>
-                  <p className="text-gray-400">
-                    Duration:{" "}
-                    <span className="text-white">{t.duration.toFixed(1)}s</span>
-                  </p>
-                </div>
-              );
-            })()}
-          </div>
-        )}
+      {/* Vertical speed legend — right of frame, centered */}
+      <div className="flex flex-col items-center justify-center gap-1.5 px-2 py-3 shrink-0 border-l border-gray-700">
+        <span
+          className="text-[10px] text-gray-400 mb-1"
+          style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+        >
+          Speed
+        </span>
+        <span className="text-[10px] text-gray-400 whitespace-nowrap">{maxSpeed.toFixed(0)}</span>
+        <div
+          className="w-3 rounded"
+          style={{
+            flex: "1 1 0",
+            maxHeight: "7rem",
+            background:
+              "linear-gradient(to bottom, rgb(239,68,68), rgb(234,179,8), rgb(34,197,94), rgb(6,182,212), rgb(59,130,246))",
+          }}
+        />
+        <span className="text-[10px] text-gray-400">0</span>
+        <span
+          className="text-[10px] text-gray-500 mt-1"
+          style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+        >
+          px/s
+        </span>
+      </div>
+
       </div>
 
       {/* Track list: bottom half */}
@@ -675,14 +668,20 @@ export default function TrackListTab({ selectedTracklets }: Props) {
         </div>
 
         {/* Track cards — virtualised to stay smooth with thousands of items */}
-        <TrackCardList
-          tracklets={filteredTracklets}
-          selectedTrackletId={selectedTrackletId}
-          maxSpeed={maxSpeed}
-          onTrackClick={handleTrackClick}
-          onMouseEnter={(id) => setHighlightedTrackletId(id)}
-          onMouseLeave={() => setHighlightedTrackletId(null)}
-        />
+        {selectedTracklets.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-xs text-gray-500">No tracklets selected.</p>
+          </div>
+        ) : (
+          <TrackCardList
+            tracklets={filteredTracklets}
+            selectedTrackletId={selectedTrackletId}
+            maxSpeed={maxSpeed}
+            onTrackClick={handleTrackClick}
+            onMouseEnter={(id) => setHighlightedTrackletId(id)}
+            onMouseLeave={() => setHighlightedTrackletId(null)}
+          />
+        )}
       </div>
     </div>
   );

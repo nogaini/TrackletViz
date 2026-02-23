@@ -1,11 +1,17 @@
-import { useCallback, useRef, useState } from 'react';
-import { useStore } from '../../../stores/useStore';
-import { videoStreamUrl, searchText } from '../../../lib/api';
-import { BBOX_COLOR } from '../../../lib/colors';
-import LazyThumbnail from '../../shared/LazyThumbnail';
-import type { SearchResult, TrackletMetadata } from '../../../types/index';
+import { useCallback, useRef, useState } from "react";
+import { searchText, videoStreamUrl } from "../../../lib/api";
+import { BBOX_COLOR } from "../../../lib/colors";
+import { useStore } from "../../../stores/useStore";
+import type { SearchResult, TrackletMetadata } from "../../../types/index";
+import LazyThumbnail from "../../shared/LazyThumbnail";
 
-function TrackletModal({ tracklet, onClose }: { tracklet: TrackletMetadata; onClose: () => void }) {
+function TrackletModal({
+  tracklet,
+  onClose,
+}: {
+  tracklet: TrackletMetadata;
+  onClose: () => void;
+}) {
   const { selectedVideoId, videoMetadata } = useStore();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -18,7 +24,7 @@ function TrackletModal({ tracklet, onClose }: { tracklet: TrackletMetadata; onCl
     }
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const boxes = tracklet.bounding_boxes;
@@ -27,13 +33,21 @@ function TrackletModal({ tracklet, onClose }: { tracklet: TrackletMetadata; onCl
     let bestDiff = Math.abs(boxes[0].timestamp - video.currentTime);
     for (const b of boxes) {
       const d = Math.abs(b.timestamp - video.currentTime);
-      if (d < bestDiff) { bestDiff = d; best = b; }
+      if (d < bestDiff) {
+        bestDiff = d;
+        best = b;
+      }
     }
     const sx = canvas.width / (videoMetadata?.width ?? canvas.width);
     const sy = canvas.height / (videoMetadata?.height ?? canvas.height);
     ctx.strokeStyle = BBOX_COLOR;
     ctx.lineWidth = 2;
-    ctx.strokeRect(best.x1 * sx, best.y1 * sy, (best.x2 - best.x1) * sx, (best.y2 - best.y1) * sy);
+    ctx.strokeRect(
+      best.x1 * sx,
+      best.y1 * sy,
+      (best.x2 - best.x1) * sx,
+      (best.y2 - best.y1) * sy,
+    );
   };
 
   const handleLoaded = () => {
@@ -49,8 +63,8 @@ function TrackletModal({ tracklet, onClose }: { tracklet: TrackletMetadata; onCl
       onClick={onClose}
     >
       <div
-        className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden shadow-2xl w-[900px] max-w-[95vw] max-h-[90vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
+        className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden shadow-2xl w-[1500px] max-w-[95vw] max-h-[100vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700">
           <span className="text-sm text-gray-200 capitalize">
@@ -90,7 +104,7 @@ function TrackletModal({ tracklet, onClose }: { tracklet: TrackletMetadata; onCl
 
 export default function TextSearchTab() {
   const { selectedVideoId, setHighlightedTrackletId } = useStore();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,14 +118,14 @@ export default function TextSearchTab() {
       const data = await searchText(selectedVideoId, query.trim(), 20);
       setResults(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
+      setError(err instanceof Error ? err.message : "Search failed");
     } finally {
       setLoading(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') void handleSearch();
+    if (e.key === "Enter") void handleSearch();
   };
 
   const handleThumbMouseEnter = useCallback(
@@ -133,7 +147,7 @@ export default function TextSearchTab() {
               type="text"
               placeholder="e.g. person walking fast..."
               value={query}
-              onChange={e => setQuery(e.target.value)}
+              onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               className="flex-1 bg-gray-800 text-gray-200 text-sm border border-gray-600 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-gray-500"
             />
@@ -142,11 +156,13 @@ export default function TextSearchTab() {
               disabled={loading || !selectedVideoId || !query.trim()}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-1.5 rounded transition-colors"
             >
-              {loading ? '…' : 'Search'}
+              {loading ? "…" : "Search"}
             </button>
           </div>
           {!selectedVideoId && (
-            <p className="text-[10px] text-gray-500 mt-1">Select a video first.</p>
+            <p className="text-[10px] text-gray-500 mt-1">
+              Select a video first.
+            </p>
           )}
           {error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}
         </div>
@@ -159,7 +175,9 @@ export default function TextSearchTab() {
             </div>
           )}
           {!loading && results.length === 0 && query && (
-            <p className="text-gray-500 text-sm text-center py-8">No results found.</p>
+            <p className="text-gray-500 text-sm text-center py-8">
+              No results found.
+            </p>
           )}
           {!loading && results.length === 0 && !query && (
             <p className="text-gray-500 text-sm text-center py-8">
@@ -168,10 +186,15 @@ export default function TextSearchTab() {
           )}
           <div className="grid grid-cols-10 gap-1">
             {results.map((r, i) => (
-              <div key={`${r.tracklet.tracklet_id}-${i}`} className="relative group">
+              <div
+                key={`${r.tracklet.tracklet_id}-${i}`}
+                className="relative group"
+              >
                 <button
                   onClick={() => setModal(r.tracklet)}
-                  onMouseEnter={() => handleThumbMouseEnter(r.tracklet.tracklet_id)}
+                  onMouseEnter={() =>
+                    handleThumbMouseEnter(r.tracklet.tracklet_id)
+                  }
                   onMouseLeave={handleThumbMouseLeave}
                   className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-500 rounded-lg p-1 text-left transition-colors"
                 >
@@ -184,7 +207,9 @@ export default function TextSearchTab() {
                 </button>
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-10 hidden group-hover:block bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] text-gray-200 whitespace-nowrap pointer-events-none shadow-lg">
                   <span className="capitalize">{r.tracklet.class_name}</span>
-                  <span className="text-blue-400 font-mono ml-1">{(r.score * 100).toFixed(0)}%</span>
+                  <span className="text-blue-400 font-mono ml-1">
+                    {(r.score * 100).toFixed(0)}%
+                  </span>
                 </div>
               </div>
             ))}
@@ -192,7 +217,9 @@ export default function TextSearchTab() {
         </div>
       </div>
 
-      {modal && <TrackletModal tracklet={modal} onClose={() => setModal(null)} />}
+      {modal && (
+        <TrackletModal tracklet={modal} onClose={() => setModal(null)} />
+      )}
     </>
   );
 }

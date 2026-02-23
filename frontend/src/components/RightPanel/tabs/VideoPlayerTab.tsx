@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../../stores/useStore';
 import { videoStreamUrl } from '../../../lib/api';
 import { mergeIntervals } from '../../../lib/utils';
@@ -18,6 +18,7 @@ interface Segment {
 interface PopoverState {
   segment: Segment;
   x: number;
+  canvasW: number;
 }
 
 /**
@@ -59,13 +60,13 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
   const duration = videoMetadata?.duration ?? 0;
 
   // Compute merged timeline segments
-  const mergedSegments: Segment[] = (() => {
+  const mergedSegments = useMemo<Segment[]>(() => {
     const intervals: [number, number][] = selectedTracklets.map(t => [
       t.start_timestamp,
       t.end_timestamp,
     ]);
     return mergeIntervals(intervals).map(([s, e]) => ({ start: s, end: e }));
-  })();
+  }, [selectedTracklets]);
 
   // ── Canvas bbox drawing loop ────────────────────────────────────────────
   useEffect(() => {
@@ -161,7 +162,7 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
     // Segments
     for (const seg of mergedSegments) {
       const x = (seg.start / duration) * W;
-      const w = Math.max(1, ((seg.end - seg.start) / duration) * W);
+      const w = Math.max(6, ((seg.end - seg.start) / duration) * W);
       const isActive =
         loopTracklet !== null &&
         loopTracklet.start_timestamp < seg.end &&
@@ -171,28 +172,37 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
     }
   }, [mergedSegments, duration, loopTracklet]);
 
-  // Hit-test helper: which segment was clicked at normalized position frac?
-  const segmentAtFrac = useCallback(
-    (frac: number): Segment | null => {
-      const time = frac * duration;
-      return mergedSegments.find(s => s.start <= time && time <= s.end) ?? null;
-    },
-    [mergedSegments, duration],
-  );
-
   const handleTimelineClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (duration === 0) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const frac = (e.clientX - rect.left) / rect.width;
-      const seg = segmentAtFrac(frac);
+      const canvasW = rect.width;
+      const clickX = e.clientX - rect.left;
+      const time = (clickX / canvasW) * duration;
+
+      // 1. Exact hit-test
+      let seg = mergedSegments.find(s => s.start <= time && time <= s.end) ?? null;
+
+      // 2. Tolerance hit-test: ±6 CSS pixels converted to time units
+      if (!seg && canvasW > 0) {
+        const toleranceTime = (6 / canvasW) * duration;
+        let minDist = Infinity;
+        for (const s of mergedSegments) {
+          const dist = time < s.start ? s.start - time : time > s.end ? time - s.end : 0;
+          if (dist <= toleranceTime && dist < minDist) {
+            minDist = dist;
+            seg = s;
+          }
+        }
+      }
+
       if (seg) {
-        setPopover({ segment: seg, x: e.clientX - rect.left });
+        setPopover({ segment: seg, x: clickX, canvasW });
       } else {
         setPopover(null);
       }
     },
-    [duration, segmentAtFrac],
+    [duration, mergedSegments],
   );
 
   // ── Loop playback ───────────────────────────────────────────────────────
@@ -247,7 +257,11 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
             {popover && (
               <div
                 className="absolute z-30 bg-gray-800 border border-gray-600 rounded-lg p-2 shadow-xl mt-1 max-h-48 overflow-y-auto"
-                style={{ left: Math.min(popover.x, 200) }}
+                style={
+                  popover.x <= popover.canvasW / 2
+                    ? { left: popover.x }
+                    : { right: popover.canvasW - popover.x }
+                }
               >
                 <p className="text-[10px] text-gray-400 mb-1.5 uppercase tracking-wide">
                   Tracklets in segment

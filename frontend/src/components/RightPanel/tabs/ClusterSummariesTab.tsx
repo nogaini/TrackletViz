@@ -1,9 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { videoStreamUrl } from "../../../lib/api";
-import { getClusterColorHex, BBOX_COLOR, speedToColor } from "../../../lib/colors";
+import {
+  BBOX_COLOR,
+  getClusterColorHex,
+  speedToColor,
+} from "../../../lib/colors";
 import { useStore } from "../../../stores/useStore";
-import LazyThumbnail from "../../shared/LazyThumbnail";
 import type { TrackletMetadata } from "../../../types/index";
+import LazyThumbnail from "../../shared/LazyThumbnail";
 
 interface Props {
   selectedTracklets: TrackletMetadata[];
@@ -86,7 +90,7 @@ function TrackletModal({
       onClick={onClose}
     >
       <div
-        className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden shadow-2xl w-[900px] max-w-[95vw] max-h-[90vh] overflow-y-auto"
+        className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden shadow-2xl w-[1500px] max-w-[100vw] max-h-[95vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700">
@@ -233,11 +237,17 @@ export default function ClusterSummariesTab({
                         className="relative rounded overflow-hidden border border-gray-600 hover:border-blue-500 transition-colors"
                         onMouseEnter={(e) => {
                           handleThumbMouseEnter(t.tracklet_id);
-                          setTooltip({ tracklet: t, x: e.clientX, y: e.clientY });
+                          setTooltip({
+                            tracklet: t,
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
                         }}
                         onMouseMove={(e) => {
                           setTooltip((prev) =>
-                            prev ? { ...prev, x: e.clientX, y: e.clientY } : prev,
+                            prev
+                              ? { ...prev, x: e.clientX, y: e.clientY }
+                              : prev,
                           );
                         }}
                         onMouseLeave={() => {
@@ -274,7 +284,9 @@ export default function ClusterSummariesTab({
           className="fixed z-50 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200 shadow-xl pointer-events-none space-y-0.5"
           style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}
         >
-          <div className="font-medium capitalize">{tooltip.tracklet.class_name}</div>
+          <div className="font-medium capitalize">
+            {tooltip.tracklet.class_name}
+          </div>
           <div className="text-gray-400">
             Avg speed:{" "}
             <span className="text-gray-200">
@@ -289,7 +301,9 @@ export default function ClusterSummariesTab({
           </div>
           <div className="text-gray-400">
             Frames:{" "}
-            <span className="text-gray-200">{tooltip.tracklet.point_count}</span>
+            <span className="text-gray-200">
+              {tooltip.tracklet.point_count}
+            </span>
           </div>
         </div>
       )}
