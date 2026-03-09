@@ -5,6 +5,7 @@ import { useStore } from './stores/useStore';
 import { useVideos } from './hooks/useVideos';
 import { useVideoMetadata } from './hooks/useVideoMetadata';
 import { useTracklets } from './hooks/useTracklets';
+import { useGlobalClips } from './hooks/useGlobalClips';
 import Header from './components/Header/Header';
 import EmbeddingsPanel from './components/EmbeddingsPanel/EmbeddingsPanel';
 import RightPanel from './components/RightPanel/RightPanel';
@@ -24,11 +25,13 @@ function AppContent() {
     setVideos,
     setVideoMetadata,
     setTracklets,
+    setGlobalClips,
   } = useStore();
 
   const { data: videos } = useVideos();
   const { data: videoMetadata } = useVideoMetadata(selectedVideoId);
   const { data: tracklets } = useTracklets(selectedVideoId, videoMetadata?.total_tracklets);
+  const { data: globalClips } = useGlobalClips(selectedVideoId);
 
   useEffect(() => {
     if (videos) setVideos(videos);
@@ -41,6 +44,10 @@ function AppContent() {
   useEffect(() => {
     setTracklets(tracklets ?? []);
   }, [tracklets, setTracklets]);
+
+  useEffect(() => {
+    setGlobalClips(globalClips ?? []);
+  }, [globalClips, setGlobalClips]);
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ height: '100dvh' }}>

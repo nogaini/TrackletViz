@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import Konva from "konva";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image as KonvaImage, Layer, Shape, Rect, Stage } from "react-konva";
-import { videoStreamUrl } from "../../../lib/api";
+import { fetchTrackletBatch, videoStreamUrl } from "../../../lib/api";
 import { getClassColorHex, speedToColorHex } from "../../../lib/colors";
 import { useStore } from "../../../stores/useStore";
 import type { BoundingBox, TrackletMetadata } from "../../../types/index";
@@ -82,11 +82,12 @@ function findNearestTracklet(
   vx: number,
   vy: number,
   radiusPx: number,
+  bboxMap: Map<string, BoundingBox[]>,
 ): TrackletMetadata | null {
   let best: TrackletMetadata | null = null;
   let bestDist = radiusPx * radiusPx;
   for (const t of tracklets) {
-    for (const box of t.bounding_boxes) {
+    for (const box of (bboxMap.get(t.tracklet_id) ?? [])) {
       const dx = box.center_x - vx;
       const dy = box.center_y - vy;
       const d2 = dx * dx + dy * dy;
@@ -108,6 +109,7 @@ function TrackCardList({
   onTrackClick,
   onMouseEnter,
   onMouseLeave,
+  bboxMap,
 }: {
   tracklets: TrackletMetadata[];
   selectedTrackletId: string | null;
@@ -115,6 +117,7 @@ function TrackCardList({
   onTrackClick: (t: TrackletMetadata) => void;
   onMouseEnter: (id: string) => void;
   onMouseLeave: () => void;
+  bboxMap: Map<string, BoundingBox[]>;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -181,7 +184,7 @@ function TrackCardList({
                   </span>
                 </div>
                 <div className="mb-1.5 rounded overflow-hidden bg-gray-900/50 px-1 py-0.5">
-                  <SpeedSparkline points={t.bounding_boxes} maxSpeed={maxSpeed} />
+                  <SpeedSparkline points={bboxMap.get(t.tracklet_id) ?? []} maxSpeed={maxSpeed} />
                 </div>
                 <div className="flex gap-3 text-[10px] text-gray-400">
                   <span>
@@ -206,8 +209,46 @@ function TrackCardList({
 }
 
 export default function TrackListTab({ selectedTracklets }: Props) {
-  const { selectedVideoId, videoMetadata, setHighlightedTrackletId } =
+  const { selectedVideoId, videoMetadata, setHighlightedTrackletId, selectedTrackletIds } =
     useStore();
+
+  // Stable key derived from selected IDs — avoids effect loop from array identity changes
+  const selectionKey = useMemo(
+    () => [...selectedTrackletIds].sort().join(','),
+    [selectedTrackletIds],
+  );
+
+  // Per-tracklet bbox data, loaded progressively in background chunks
+  const [bboxMap, setBboxMap] = useState<Map<string, BoundingBox[]>>(new Map());
+
+  useEffect(() => {
+    setBboxMap(new Map());
+    const ids = selectionKey ? selectionKey.split(',') : [];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    const CHUNK_SIZE = 20;
+
+    async function loadChunks() {
+      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+        if (cancelled) break;
+        const chunk = ids.slice(i, i + CHUNK_SIZE);
+        try {
+          const results = await fetchTrackletBatch(chunk);
+          if (!cancelled) {
+            setBboxMap(prev => {
+              const next = new Map(prev);
+              for (const r of results) {
+                if (r.bounding_boxes?.length) next.set(r.tracklet_id, r.bounding_boxes);
+              }
+              return next;
+            });
+          }
+        } catch { /* skip failed chunk, continue */ }
+      }
+    }
+    loadChunks();
+    return () => { cancelled = true; };
+  }, [selectionKey]);
 
   // Filters
   const [activeClasses, setActiveClasses] = useState<Set<string> | null>(null);
@@ -426,14 +467,22 @@ export default function TrackListTab({ selectedTracklets }: Props) {
       } else {
         setSelectedTrackletId(tracklet.tracklet_id);
         stopPlayback();
-        startPlayback(
-          tracklet.start_timestamp,
-          tracklet.end_timestamp,
-          tracklet.bounding_boxes,
-        );
+        const cached = bboxMap.get(tracklet.tracklet_id);
+        if (cached && cached.length > 0) {
+          startPlayback(tracklet.start_timestamp, tracklet.end_timestamp, cached);
+        } else {
+          // Fetch just this one tracklet immediately so playback starts fast
+          fetchTrackletBatch([tracklet.tracklet_id]).then(([full]) => {
+            const boxes = full?.bounding_boxes ?? [];
+            if (boxes.length > 0) {
+              setBboxMap(prev => new Map(prev).set(tracklet.tracklet_id, boxes));
+            }
+            startPlayback(tracklet.start_timestamp, tracklet.end_timestamp, boxes);
+          });
+        }
       }
     },
-    [selectedTrackletId, stopPlayback, startPlayback],
+    [selectedTrackletId, stopPlayback, startPlayback, bboxMap],
   );
 
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -472,9 +521,10 @@ export default function TrackListTab({ selectedTracklets }: Props) {
         native.globalAlpha = opacity;
         native.lineWidth = strokeW;
         native.lineCap = "round";
-        for (let i = 0; i < t.bounding_boxes.length - 1; i++) {
-          const p = t.bounding_boxes[i];
-          const q = t.bounding_boxes[i + 1];
+        const tBoxes = bboxMap.get(t.tracklet_id);
+        for (let i = 0; tBoxes && i < tBoxes.length - 1; i++) {
+          const p = tBoxes[i];
+          const q = tBoxes[i + 1];
           const speed = ((p.speed || 0) + (q.speed || 0)) / 2;
           native.strokeStyle = speedToColorHex(speed, maxSpeed);
           native.beginPath();
@@ -486,7 +536,7 @@ export default function TrackListTab({ selectedTracklets }: Props) {
       native.globalAlpha = 1;
       native.restore();
     },
-    [filteredTracklets, selectedTrackletId, scaleFactor, maxSpeed],
+    [filteredTracklets, selectedTrackletId, scaleFactor, maxSpeed, bboxMap],
   );
 
   const selectedTrackMeta = selectedTrackletId
@@ -541,7 +591,7 @@ export default function TrackListTab({ selectedTracklets }: Props) {
             const videoX = (pos.x - stagePos.x) / stageScale / scaleFactor;
             const videoY = (pos.y - stagePos.y) / stageScale / scaleFactor;
             const HIT_RADIUS = 20 / stageScale;
-            const found = findNearestTracklet(filteredTracklets, videoX, videoY, HIT_RADIUS);
+            const found = findNearestTracklet(filteredTracklets, videoX, videoY, HIT_RADIUS, bboxMap);
             if (found) {
               handleTrackClick(found);
             } else {
@@ -680,6 +730,7 @@ export default function TrackListTab({ selectedTracklets }: Props) {
             onTrackClick={handleTrackClick}
             onMouseEnter={(id) => setHighlightedTrackletId(id)}
             onMouseLeave={() => setHighlightedTrackletId(null)}
+            bboxMap={bboxMap}
           />
         )}
       </div>

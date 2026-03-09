@@ -105,3 +105,31 @@ class VideoMetadata(BaseModel):
     class_distribution: Dict[str, float] = {}   # percentages across all tracklets
     video_start_time: Optional[str] = None  # ISO format: "YYYY-MM-DDTHH:MM:SS"
     tag: Optional[str] = None               # human-readable label set at index time
+
+
+# ── Global Clips ────────────────────────────────────────────────────────────
+
+class GlobalClipMetadata(BaseModel):
+    """Metadata for a single non-overlapping full-scene video clip."""
+    clip_id: str                    # "{video_id}_clip_{index:04d}"
+    video_id: str
+    clip_index: int                 # 0-based
+    start_time: float               # seconds from video start
+    end_time: float
+    cluster_id: int = -1
+    umap_x: float = 0.0
+    umap_y: float = 0.0
+    thumbnail_base64: Optional[str] = None   # thumbnail_widthxH middle frame, full-scene JPEG
+    median_frame_b64: Optional[str] = None   # native-res median frame for heatmaps (reps only)
+    optical_flow_b64: Optional[str] = None   # base64-encoded raw float32 bytes (fh,fw,2) (reps only)
+    flow_width: int = 0             # native video width at index time
+    flow_height: int = 0            # native video height at index time
+    tracklet_ids: List[str] = []    # tracklets overlapping [start_time, end_time]
+    is_representative: bool = False  # True for FPS-selected cluster representatives
+
+
+class GlobalClusterStatistics(BaseModel):
+    """Aggregate statistics for a single HDBSCAN cluster of global clips."""
+    cluster_id: int
+    member_count: int
+    representative_clip_ids: List[str]   # FPS-selected clip IDs

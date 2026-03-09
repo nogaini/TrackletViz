@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from indexer.config import load_config
 from indexer.storage import QdrantStorage
 from indexer.embeddings import TrackletEmbedder
-from api.routes import videos, tracklets, search, stream
+from api.routes import videos, tracklets, search, stream, global_clips
 
 CONFIG_PATH = os.environ.get("TRACKVIZ_CONFIG", "config/default.yaml")
 
@@ -34,6 +34,7 @@ app.include_router(videos.router, prefix="/api")
 app.include_router(tracklets.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
+app.include_router(global_clips.router, prefix="/api")
 
 
 @app.get("/health")

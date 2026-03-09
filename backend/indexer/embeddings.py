@@ -4,17 +4,14 @@ VideoPrism embedding extraction for tracklets.
 Uses JAX/Flax-based VideoPrism (LvT variant) for both video and text embeddings.
 The LvT (Language-Video Transformer) model supports cross-modal retrieval.
 
-Must be imported before PyTorch allocates GPU memory, or call
-torch.cuda.empty_cache() beforehand, because JAX is configured not to
-pre-allocate the full GPU memory pool (XLA_PYTHON_CLIENT_PREALLOCATE=false).
+JAX is imported after PyTorch has finished and torch.cuda.empty_cache() has been
+called (step 8 of the pipeline), so JAX's default memory preallocation does not
+conflict with PyTorch.
 """
 
 from __future__ import annotations
 
-# Must be set before JAX is imported to prevent it from hoarding all GPU memory
-# while PyTorch is also in use.
 import os
-os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import ctypes
 import importlib
@@ -52,7 +49,10 @@ def _preload_venv_cudnn() -> None:
 _preload_venv_cudnn()
 del _preload_venv_cudnn
 
-from typing import Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
+
+if TYPE_CHECKING:
+    from indexer.global_clips import GlobalClipProcessor
 
 import cv2
 import jax
@@ -258,6 +258,106 @@ class TrackletEmbedder:
             logger.info(f"  Embedded {done} / {len(tracklets_info)} tracklets")
 
         cap.release()
+        return embeddings
+
+    def embed_global_clips(
+        self,
+        clip_frame_arrays: Dict[str, np.ndarray],
+    ) -> Dict[str, np.ndarray]:
+        """
+        Extract embeddings for pre-extracted global clip frame arrays.
+
+        Args:
+            clip_frame_arrays: Dict mapping clip_id → (T, 288, 288, 3) float32 RGB.
+                The arrays are already in the correct format (no video read or
+                cropping needed).
+
+        Returns:
+            Dict mapping clip_id → (768,) float32 embedding array.
+        """
+        if self._forward is None:
+            raise RuntimeError("Call setup() before embed_global_clips()")
+
+        embeddings: Dict[str, np.ndarray] = {}
+        clip_ids = list(clip_frame_arrays.keys())
+        batch_size = self.config.batch_size
+
+        for batch_start in range(0, len(clip_ids), batch_size):
+            batch_ids = clip_ids[batch_start: batch_start + batch_size]
+            batch_clips = [clip_frame_arrays[cid] for cid in batch_ids]
+
+            video_batch = jnp.asarray(np.stack(batch_clips))  # (B, T, H, W, 3)
+            b = video_batch.shape[0]
+            text_ids = jnp.asarray(np.tile(self._dummy_text_ids, (b, 1)))
+            text_pads = jnp.asarray(np.tile(self._dummy_text_paddings, (b, 1)))
+
+            video_emb, _ = self._forward(video_batch, text_ids, text_pads)
+            video_emb_np = np.asarray(video_emb)  # (B, 768)
+
+            for i, cid in enumerate(batch_ids):
+                embeddings[cid] = video_emb_np[i].astype(np.float32)
+
+            done = min(batch_start + batch_size, len(clip_ids))
+            logger.info(f"  Embedded {done} / {len(clip_ids)} global clips")
+
+        return embeddings
+
+    def embed_global_clips_streaming(
+        self,
+        clip_infos: List[Dict],
+        cap: cv2.VideoCapture,
+        gc_processor: "GlobalClipProcessor",
+    ) -> Dict[str, np.ndarray]:
+        """
+        Extract embeddings for global clips one batch at a time (memory-efficient).
+
+        Unlike embed_global_clips(), this method does NOT require all frame arrays
+        to be in memory simultaneously. It interleaves frame extraction and embedding
+        one batch at a time, capping peak memory at batch_size × ~6 MB.
+
+        Args:
+            clip_infos: List of dicts with clip_id, sample_frame_nums.
+            cap: Already-opened cv2.VideoCapture for the source video.
+            gc_processor: GlobalClipProcessor instance for extract_frames_for_clip().
+
+        Returns:
+            Dict mapping clip_id → (768,) float32 embedding array.
+        """
+        if self._forward is None:
+            raise RuntimeError("Call setup() before embed_global_clips_streaming()")
+
+        import gc as _gc
+
+        embeddings: Dict[str, np.ndarray] = {}
+        batch_size = self.config.batch_size
+
+        for batch_start in range(0, len(clip_infos), batch_size):
+            batch = clip_infos[batch_start: batch_start + batch_size]
+            batch_clips: List[np.ndarray] = []
+            batch_ids: List[str] = []
+
+            for clip in batch:
+                arr = gc_processor.extract_frames_for_clip(cap, clip["sample_frame_nums"])
+                batch_clips.append(arr)
+                batch_ids.append(clip["clip_id"])
+
+            video_batch = jnp.asarray(np.stack(batch_clips))
+            b = video_batch.shape[0]
+            text_ids = jnp.asarray(np.tile(self._dummy_text_ids, (b, 1)))
+            text_pads = jnp.asarray(np.tile(self._dummy_text_paddings, (b, 1)))
+
+            video_emb, _ = self._forward(video_batch, text_ids, text_pads)
+            video_emb_np = np.asarray(video_emb)
+
+            for i, cid in enumerate(batch_ids):
+                embeddings[cid] = video_emb_np[i].astype(np.float32)
+
+            del batch_clips, video_batch, video_emb, video_emb_np
+            _gc.collect()
+
+            done = min(batch_start + batch_size, len(clip_infos))
+            logger.info(f"  Embedded {done} / {len(clip_infos)} global clips (streaming)")
+
         return embeddings
 
     def embed_text(self, query: str) -> np.ndarray:

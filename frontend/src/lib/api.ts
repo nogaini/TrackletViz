@@ -1,4 +1,12 @@
-import type { VideoSummary, VideoMetadata, TrackletMetadata, SearchResult } from '../types/index';
+import type {
+  VideoSummary,
+  VideoMetadata,
+  TrackletMetadata,
+  SearchResult,
+  GlobalClipMetadata,
+  GlobalClusterStatistics,
+  ClipSearchResult,
+} from '../types/index';
 
 export const fetchVideos = (): Promise<VideoSummary[]> =>
   fetch('/api/videos/').then(r => r.json()) as Promise<VideoSummary[]>;
@@ -36,6 +44,19 @@ export const fetchTrackletThumbnail = async (trackletId: string): Promise<string
   return data.thumbnail_base64;
 };
 
+/**
+ * Fetch full tracklet data (including bounding_boxes) for a list of tracklet IDs.
+ * Used for lazy-loading bbox data when a selection is made.
+ */
+export const fetchTrackletBatch = (
+  trackletIds: string[],
+): Promise<TrackletMetadata[]> =>
+  fetch('/api/tracklets/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tracklet_ids: trackletIds }),
+  }).then(r => r.json()) as Promise<TrackletMetadata[]>;
+
 export const searchText = (
   video_id: string,
   query: string,
@@ -49,3 +70,37 @@ export const searchText = (
 
 export const videoStreamUrl = (video_id: string): string =>
   `/api/videos/${video_id}/stream`;
+
+export const fetchGlobalClips = (
+  videoId: string,
+  opts: { includeFlow?: boolean; includeMedian?: boolean } = {},
+): Promise<GlobalClipMetadata[]> => {
+  const params = new URLSearchParams();
+  if (opts.includeFlow) params.set('include_flow', 'true');
+  if (opts.includeMedian) params.set('include_median', 'true');
+  const qs = params.toString();
+  return fetch(`/api/global-clips/${videoId}${qs ? `?${qs}` : ''}`).then(
+    r => r.json(),
+  ) as Promise<GlobalClipMetadata[]>;
+};
+
+export const fetchGlobalClipDetail = (clipId: string): Promise<GlobalClipMetadata> =>
+  fetch(`/api/global-clips/detail/${clipId}`).then(r => r.json()) as Promise<GlobalClipMetadata>;
+
+export const fetchGlobalClusterStats = (
+  videoId: string,
+): Promise<GlobalClusterStatistics[]> =>
+  fetch(`/api/global-clips/${videoId}/cluster-stats`).then(
+    r => r.json(),
+  ) as Promise<GlobalClusterStatistics[]>;
+
+export const searchClips = (
+  video_id: string,
+  query: string,
+  limit = 20,
+): Promise<ClipSearchResult[]> =>
+  fetch('/api/search/clips', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ video_id, query, limit }),
+  }).then(r => r.json()) as Promise<ClipSearchResult[]>;

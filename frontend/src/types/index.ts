@@ -17,8 +17,8 @@ export interface TrackletMetadata {
   video_id: string;
   class_name: string;
   class_id: number;
-  bounding_boxes: BoundingBox[];
-  bbox_centers: [number, number][];
+  bounding_boxes?: BoundingBox[];
+  bbox_centers?: [number, number][];
   start_timestamp: number;
   end_timestamp: number;
   duration: number;
@@ -65,4 +65,38 @@ export interface VideoSummary {
 export interface SearchResult {
   tracklet: TrackletMetadata;
   score: number;
+}
+
+export interface GlobalClipMetadata {
+  clip_id: string;
+  video_id: string;
+  clip_index: number;
+  start_time: number;
+  end_time: number;
+  cluster_id: number;
+  umap_x: number;
+  umap_y: number;
+  thumbnail_base64?: string;
+  median_frame_b64?: string;
+  optical_flow_b64?: string;
+  flow_width: number;
+  flow_height: number;
+  tracklet_ids: string[];
+  is_representative?: boolean;
+}
+
+export interface GlobalClusterStatistics {
+  cluster_id: number;
+  member_count: number;
+  representative_clip_ids: string[];
+}
+
+export interface ClipSearchResult {
+  clip: GlobalClipMetadata;
+  score: number;
+}
+
+export interface TwoPointSelection {
+  clip1: GlobalClipMetadata;
+  clip2: GlobalClipMetadata;
 }

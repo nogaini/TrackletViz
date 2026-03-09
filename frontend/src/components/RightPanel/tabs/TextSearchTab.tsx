@@ -28,7 +28,7 @@ function TrackletModal({
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const boxes = tracklet.bounding_boxes;
-    if (boxes.length === 0) return;
+    if (!boxes || boxes.length === 0) return;
     let best = boxes[0];
     let bestDiff = Math.abs(boxes[0].timestamp - video.currentTime);
     for (const b of boxes) {
@@ -145,7 +145,7 @@ export default function TextSearchTab() {
           <div className="flex gap-2">
             <input
               type="text"
-              placeholder="e.g. person walking fast..."
+              placeholder="e.g., person wearing white"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}

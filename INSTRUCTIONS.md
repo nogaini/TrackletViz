@@ -82,8 +82,9 @@ processing:
 videoprism:
   model_path: ../videoprism      # Path to cloned VideoPrism repo (relative to backend/, or absolute)
   model_name: videoprism_lvt_public_v1_base
-  batch_size: 8                  # Tracklets per embedding batch (reduce if OOM)
+  batch_size: 4                  # Tracklets per embedding batch (reduce if OOM)
   device: cuda
+  num_frames: 16                 # Frames sampled per tracklet for embedding
 
 clustering:
   umap:
@@ -91,23 +92,39 @@ clustering:
     min_dist: 0.1
     metric: cosine
   hdbscan:
-    min_cluster_size: 2          # Minimum points to form a cluster
-    min_samples: 1
+    min_cluster_size: 15         # Minimum points to form a cluster
+    min_samples: 3               # Controls noise sensitivity
+  fps_representatives: 10        # Representatives selected per cluster via FPS
 
 qdrant:
   host: localhost
   port: 6333                     # Change if Qdrant runs on a different port
+
+global_clips:
+  clip_duration: 10              # Seconds per non-overlapping clip
+  num_frames: 16                 # Frames sampled per clip for VideoPrism input
+  thumbnail_width: 320           # Full-scene thumbnail width (pixels)
+  flow_width: 640                # Optical flow grid width (height computed proportionally)
+  median_frame_width: 640        # Median frame JPEG width (height computed proportionally)
+  umap:
+    n_neighbors: 5               # Lower than tracklet UMAP due to fewer clips
+  hdbscan:
+    min_cluster_size: 3          # Minimum clips to form a cluster
+    min_samples: 1
+  fps_representatives: 5
+
+# Checkpoint directory (relative to backend/); stores intermediate results for resume
+cache_dir: .indexer_cache
 ```
 
 ---
 
 ## 5. Indexing a Video
 
-The indexing pipeline runs 13 steps and stores results in Qdrant. Run it from the `backend/` directory:
+The indexing pipeline runs 21 steps and stores results in Qdrant. Run it from the `backend/` directory:
 
 ```bash
 cd backend
-export XLA_PYTHON_CLIENT_PREALLOCATE=false
 .venv/bin/python indexer/main.py --video /path/to/video.mp4
 ```
 
@@ -133,7 +150,34 @@ To attach a human-readable label to the video (shown in the UI dropdown), pass `
 
 The tag is stored alongside the video metadata and displayed in the header dropdown in place of the raw `video_id`. Tags do not need to be unique, but using unique tags makes deletion by tag unambiguous.
 
-**The `XLA_PYTHON_CLIENT_PREALLOCATE=false` environment variable is required** to prevent JAX from pre-allocating all GPU memory, which would conflict with PyTorch.
+### Checkpoint-based resumption
+
+The pipeline saves atomic checkpoints after each major step to `cache_dir` (default: `backend/.indexer_cache/<video_id>/`). If the pipeline is interrupted (crash, OOM, Ctrl-C), re-running the same command automatically resumes from the last completed step — no data is lost and expensive GPU steps are not repeated.
+
+To force a full re-run from scratch (clearing all checkpoints):
+
+```bash
+.venv/bin/python indexer/main.py --video /path/to/video.mp4 --force
+```
+
+To recompute only specific components of an already-indexed video without re-running the full pipeline:
+
+```bash
+.venv/bin/python indexer/main.py --video /path/to/video.mp4 --recompute <component> [<component> ...]
+```
+
+Available components for `--recompute`:
+
+| Component | What it recomputes |
+|-----------|-------------------|
+| `tracklet-thumbnails` | Regenerates 128×128 JPEG thumbnails for all tracklets and patches them in Qdrant |
+| `clip-thumbnails` | Regenerates full-scene thumbnails for all global clips and patches them in Qdrant |
+| `median-frames` | Recomputes median frames for representative clips and patches them in Qdrant |
+| `optical-flow` | Recomputes optical flow grids for representative clips and patches them in Qdrant |
+| `local-embeddings` | Clears the embeddings checkpoint and re-runs steps 8–13 (re-embeds all tracklets, re-clusters, re-stores) |
+| `global-embeddings` | Clears the clip embeddings checkpoint and re-runs steps 16–21 (re-embeds all clips, re-clusters, re-stores) |
+
+Multiple components can be combined in a single command. Pipeline resets (`local-embeddings`, `global-embeddings`) suppress redundant surgical work for their downstream assets.
 
 ### Pipeline Steps
 
@@ -152,8 +196,16 @@ The tag is stored alongside the video metadata and displayed in the header dropd
 | 11 | Build metadata objects | Assembles all data per tracklet |
 | 12 | Compute cluster stats | Speed averages, class distributions, FPS representatives |
 | 13 | Store in Qdrant | Upserts all data; old data for this `video_id` is replaced |
+| 14 | Setup global clips collection | Creates (or verifies) the Qdrant `global_clips` collection |
+| 15 | Compute clip segments | Divides video into non-overlapping `clip_duration`-second windows |
+| 16 | Extract clip frames | Reads `num_frames` evenly-spaced frames per clip (VideoPrism input format) |
+| 17 | Embed global clips | VideoPrism embeddings for full-scene clips; same batch infrastructure as step 8 |
+| 18 | UMAP + HDBSCAN on clips | Independent 2D layout and cluster labels for global clips |
+| 19 | FPS representatives | Diverse representative clips per cluster via Farthest Point Sampling |
+| 20 | Generate clip assets | Thumbnail (middle frame), median frame, and optical flow grid per clip |
+| 21 | Store global clips | Upserts all clip data to Qdrant; old clips for this `video_id` are replaced |
 
-When complete, the terminal will print the `video_id`, tracklet count, cluster count, and class distribution.
+When complete, the terminal will print the `video_id`, tracklet count, cluster count, class distribution, global clip count, and global cluster count.
 
 ### Deleting an indexed video
 
@@ -213,7 +265,7 @@ Run these in order:
 
 1. **Qdrant** — `docker start qdrant-trackviz` (or the full `docker run` command if first time)
 2. **Index video(s)** — run the indexing pipeline for each video you want to explore
-3. **Backend API** — `cd backend && export XLA_PYTHON_CLIENT_PREALLOCATE=false && .venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000`
+3. **Backend API** — `cd backend && export XLA_PYTHON_CLIENT_PREALLOCATE=false && .venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000` (the `export` keeps the long-lived API server from preempting all GPU memory)
 4. **Frontend** — `cd frontend && npm run dev`
 5. **Open** http://localhost:5173
 
@@ -221,33 +273,50 @@ Run these in order:
 
 ## 9. Using the UI
 
-### Header — Video Selector
+### Header — Video Selector and Local/Global Toggle
 
 The dropdown in the header lists all indexed videos. Videos indexed with `--tag` display their tag; others display their raw `video_id`. Select a video to load its tracklets and metadata. The scatter plot and all tabs update automatically.
 
+The **Local / Global** toggle button (next to the video selector) switches the entire UI between two views:
+
+- **Local view** — scatter plot shows individual tracklet embeddings; tabs show tracklet-level analyses
+- **Global view** — scatter plot shows scene-level clip embeddings (one point per `clip_duration`-second window); tabs show clip-level analyses
+
 ### 2D Embeddings Panel (left side)
 
-The main scatter plot renders all tracklets as points positioned by their UMAP 2D coordinates.
+The main scatter plot renders embeddings as points positioned by their UMAP 2D coordinates. Behavior differs slightly between views:
 
-- **Color mode** — toggle between coloring by object class or by cluster ID using the buttons above the plot
-- **Selection tools** — use the toolbar to switch between lasso selection, rectangle selection, and no-selection mode; click and drag to select a group of points
+**In Local view:**
+
+- **Color mode** — toggle between coloring by object class or by cluster ID
+- **Selection tools** — lasso, rectangle, or no-selection mode; click and drag to select points
 - **Tooltip** — hover over any point to see a thumbnail of that tracklet
-- **Selection effect** — once a selection is made, all tabs on the right panel activate and show data for selected tracklets only; non-selected points are dimmed
+- **Selection effect** — selected tracklets are highlighted; all right-panel tabs update to show only selected data
 
-### Tab 0: Video Player
+**In Global view:**
+
+- **Color mode** — toggle between coloring by cluster ID or by time (chronological gradient)
+- **Selection tools** — lasso, rectangle, or no-selection mode for selecting clips
+- **2-point selection mode** (Ruler button) — click to activate, then click two clip points in the scatter plot; the two selected clips are used as reference points for the Activity Shift and Illumination Shift heatmaps; press **Escape** to cancel a pending first-click
+- **Tooltip** — hover over any point to see a full-scene thumbnail of that clip
+- **Selection effect** — selected clips drive the global right-panel tabs
+
+### Local View Tabs
+
+#### Tab 0: Video Player
 
 - Shows an annotated timeline bar over the video duration
 - Colored regions on the timeline indicate where selected tracklets appear in time
 - Click a region to see a list of tracklet cards for that time window
 - Click a card to enter **loop mode**: the video plays that tracklet's segment on repeat with a bounding box and track line overlaid
 
-### Tab 1: Heatmap
+#### Tab 1: Heatmap
 
 - Visualizes the spatial density of selected tracklets on the video's background frame
 - Regions where tracked objects spent more time appear warmer (red/orange); sparse regions are cooler (blue)
 - Useful for identifying high-activity zones in the scene
 
-### Tab 2: Track List
+#### Tab 2: Track List
 
 - Top section: canvas showing track lines for all filtered tracklets, colored by speed (cool → warm)
   - Click a track line to loop that tracklet in the video with bounding box overlay
@@ -258,7 +327,7 @@ The main scatter plot renders all tracklets as points positioned by their UMAP 2
   - Each card shows a speed sparkline, average speed, class badge, and tracklet ID
   - Filters affect both the list and the canvas track lines
 
-### Tab 3: Cluster Summaries
+#### Tab 3: Cluster Summaries
 
 - Each cluster appears as a card with color-coded border matching the scatter plot
 - Cards show: cluster ID (or "Noise" for cluster −1), member count, average speed, class distribution percentages, and thumbnail representatives
@@ -266,12 +335,43 @@ The main scatter plot renders all tracklets as points positioned by their UMAP 2
 - **Hover a representative thumbnail** → highlights that specific point in the scatter plot
 - **Click a representative thumbnail** → opens a modal with a looping video player for that tracklet
 
-### Tab 4: Text Search
+#### Tab 4: Text Search
 
 - Enter a natural language query (e.g., "person running", "red car turning") and press Enter
 - The backend converts the query to a VideoPrism text embedding and searches Qdrant for the most similar tracklet embeddings within the current video
 - Results are shown as cards sorted by similarity score (highest first)
 - Click a card to open a looping video player for that tracklet
+
+### Global View Tabs
+
+#### Global Tab: Video
+
+- Shows a timeline of the selected clips across the video duration
+- Click a clip segment on the timeline to see which local tracklets overlap that clip's time window
+- Useful for correlating scene-level moments with individual object tracks
+
+#### Global Tab: Heatmap
+
+Three sub-tabs provide different spatial analyses of the selected clips:
+
+- **State Change** — shows per-pixel variance across the selected clips' median frames; bright regions indicate areas of the scene that change appearance frequently across the selected time windows
+- **Activity Shift** — requires 2-point selection mode; computes the difference between the optical flow grids of the two selected clips and renders it as a quiver (arrow) plot; arrows show where motion patterns changed between the two moments
+- **Illumination Shift** — requires 2-point selection mode; computes the blurred luminance difference between the two selected clips' median frames; highlights regions where lighting conditions changed
+
+#### Global Tab: Clusters
+
+- Each global clip cluster appears as a card with a full-scene representative thumbnail
+- Cards show: cluster ID (or "Noise" for cluster −1), member count, and representative clip thumbnails
+- **Hover a card** → highlights all points of that cluster in the global scatter plot
+- **Hover a representative thumbnail** → highlights that specific clip point in the scatter plot
+- **Click a representative thumbnail** → opens a modal with a looping video player for that clip's time window
+
+#### Global Tab: Search
+
+- Enter a natural language query describing a scene moment (e.g., "crowded intersection", "empty road at night") and press Enter
+- The backend converts the query to a VideoPrism text embedding and searches Qdrant for the most similar global clip embeddings within the current video
+- Results are shown as cards sorted by similarity score (highest first)
+- Click a card to open a looping video player for that clip
 
 ---
 
@@ -282,9 +382,15 @@ The main scatter plot renders all tracklets as points positioned by their UMAP 2
 | `GET` | `/health` | Health check — returns `{"status": "ok"}` |
 | `GET` | `/api/videos/` | List all indexed videos with summary info |
 | `GET` | `/api/videos/{video_id}` | Full metadata for a specific video (background image, cluster stats, class distribution) |
-| `GET` | `/api/tracklets/{video_id}` | All tracklets for a video including UMAP coords, bboxes, thumbnails |
+| `GET` | `/api/tracklets/{video_id}` | Tracklets for a video; query params: `limit` (default 10000; 0=all), `offset`, `include_thumbnails` (default false), `include_bboxes` (default false) |
+| `POST` | `/api/tracklets/batch` | Fetch full data (with bboxes) for a specific set of tracklet IDs; body: `{"tracklet_ids": [...]}` |
+| `GET` | `/api/tracklets/{tracklet_id}/thumbnail` | Single tracklet thumbnail; returns `{"thumbnail_base64": "..."}` |
 | `GET` | `/api/videos/{video_id}/stream` | Range-aware video stream (supports seeking in HTML5 video element) |
 | `POST` | `/api/search/text` | Text-to-tracklet search; body: `{"video_id": "...", "query": "...", "limit": 20}` |
+| `GET` | `/api/global-clips/{video_id}` | All global clips for a video (lightweight; omits `optical_flow_b64` and `median_frame_b64` by default) |
+| `GET` | `/api/global-clips/{video_id}/cluster-stats` | Cluster statistics for global clips (member counts, representative clip IDs) |
+| `GET` | `/api/global-clips/detail/{clip_id}` | Full clip detail including `optical_flow_b64` (raw float32, base64) and `median_frame_b64` |
+| `POST` | `/api/search/clips` | Text-to-clip similarity search; body: `{"video_id": "...", "query": "...", "limit": 20}` |
 
 ---
 
@@ -296,9 +402,9 @@ The main scatter plot renders all tracklets as points positioned by their UMAP 2
 - Check that port 6333 is not blocked: `curl http://localhost:6333/healthz`
 
 **CUDA / JAX import errors or GPU OOM**
-- Always set `export XLA_PYTHON_CLIENT_PREALLOCATE=false` before running the indexer or API server
+- Set `export XLA_PYTHON_CLIENT_PREALLOCATE=false` before starting the **API server** (long-lived process; preallocation would waste GPU memory)
+- The **indexer** does not need this export — JAX initializes only after PyTorch has finished and `torch.cuda.empty_cache()` has been called
 - If OOM during embedding, reduce `videoprism.batch_size` in `default.yaml`
-- The indexer clears the PyTorch GPU cache before JAX takes over (Step 8), but GPU memory must fit both model weights
 
 **VideoPrism model not found**
 - Confirm `videoprism.model_path` in `default.yaml` points to the cloned repository directory
@@ -331,22 +437,25 @@ TrackletViz/
 │   ├── config/
 │   │   └── default.yaml        # Main configuration file
 │   ├── indexer/                # Standalone indexing pipeline
-│   │   ├── main.py             # Entry point (13-step pipeline)
+│   │   ├── main.py             # Entry point (21-step pipeline + --recompute)
 │   │   ├── config.py           # YAML config loading
+│   │   ├── checkpoint.py       # Atomic checkpoint persistence (resume on crash)
 │   │   ├── detector.py         # YOLO + BoxMOT integration
 │   │   ├── trajectory.py       # Track history accumulation
 │   │   ├── speed.py            # Displacement-based speed calculation
 │   │   ├── embeddings.py       # VideoPrism embedding extraction
 │   │   ├── clustering.py       # UMAP + HDBSCAN + FPS sampling
 │   │   ├── storage.py          # Qdrant read/write operations
-│   │   └── thumbnails.py       # JPEG thumbnail generation
+│   │   ├── thumbnails.py       # JPEG thumbnail generation
+│   │   └── global_clips.py     # Clip segmentation, median frames, optical flow
 │   ├── api/                    # FastAPI backend
 │   │   ├── main.py             # App with lifespan, CORS, routers
 │   │   └── routes/
 │   │       ├── videos.py       # GET /api/videos/ and /api/videos/{id}
-│   │       ├── tracklets.py    # GET /api/tracklets/{video_id}
-│   │       ├── search.py       # POST /api/search/text
-│   │       └── stream.py       # GET /api/videos/{id}/stream
+│   │       ├── tracklets.py    # GET /api/tracklets/{video_id}, POST /api/tracklets/batch, GET thumbnail
+│   │       ├── search.py       # POST /api/search/text and /api/search/clips
+│   │       ├── stream.py       # GET /api/videos/{id}/stream
+│   │       └── global_clips.py # GET /api/global-clips/* endpoints
 │   ├── models/
 │   │   └── schemas.py          # Pydantic data models
 │   └── pyproject.toml
@@ -362,8 +471,13 @@ TrackletViz/
 │   │   │           ├── HeatmapTab.tsx
 │   │   │           ├── TrackListTab.tsx
 │   │   │           ├── ClusterSummariesTab.tsx
-│   │   │           └── TextSearchTab.tsx
+│   │   │           ├── TextSearchTab.tsx
+│   │   │           ├── GlobalVideoTab.tsx     # Global: clip timeline + tracklet overlap
+│   │   │           ├── GlobalHeatmapTab.tsx   # Global: state change / activity / illumination
+│   │   │           ├── GlobalClusterTab.tsx   # Global: cluster cards with scene thumbnails
+│   │   │           └── GlobalSearchTab.tsx    # Global: natural language clip search
 │   │   ├── hooks/              # React Query data fetching hooks
+│   │   │   └── useGlobalClips.ts  # Clips list + cluster stats fetching
 │   │   ├── lib/                # Shared utilities (colors, etc.)
 │   │   ├── stores/             # Zustand global state
 │   │   └── types/              # TypeScript type definitions

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../../stores/useStore';
-import { videoStreamUrl } from '../../../lib/api';
+import { fetchTrackletBatch, videoStreamUrl } from '../../../lib/api';
 import { mergeIntervals } from '../../../lib/utils';
 import { BBOX_COLOR, BBOX_TRACK_COLOR } from '../../../lib/colors';
 import LazyThumbnail from '../../shared/LazyThumbnail';
@@ -81,7 +81,7 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
       const tracklet = loopTrackletRef.current;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (tracklet) {
-        const box = findClosestBox(tracklet.bounding_boxes, video.currentTime);
+        const box = findClosestBox(tracklet.bounding_boxes ?? [], video.currentTime);
         if (box) {
           const containerW = canvas.clientWidth || canvas.width;
           const containerH = canvas.clientHeight || canvas.height;
@@ -119,7 +119,7 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
           ctx.strokeStyle = BBOX_TRACK_COLOR;
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          tracklet.bounding_boxes.forEach((b, i) => {
+          (tracklet.bounding_boxes ?? []).forEach((b, i) => {
             const cx = originX + b.center_x * scaleX;
             const cy = originY + b.center_y * scaleY;
             if (i === 0) ctx.moveTo(cx, cy);
@@ -223,6 +223,18 @@ export default function VideoPlayerTab({ selectedTracklets }: Props) {
     if (!video) return;
     video.currentTime = tracklet.start_timestamp;
     void video.play();
+    // If bboxes not yet loaded, fetch just this one tracklet immediately
+    if (!tracklet.bounding_boxes?.length) {
+      fetchTrackletBatch([tracklet.tracklet_id]).then(([full]) => {
+        if (full?.bounding_boxes?.length) {
+          const enriched = { ...tracklet, bounding_boxes: full.bounding_boxes };
+          // Only apply if user is still viewing this tracklet
+          if (loopTrackletRef.current?.tracklet_id === tracklet.tracklet_id) {
+            loopTrackletRef.current = enriched;
+          }
+        }
+      });
+    }
   }, []);
 
   const stopLoop = useCallback(() => {

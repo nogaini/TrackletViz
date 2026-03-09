@@ -34,7 +34,27 @@ clustering:
     min_samples: 3 # Controls noise sensitivity
     metric: euclidean # Applied on original high-dim embeddings
     cluster_selection_method: eom
-  fps_representatives: 5 # Number of FPS representatives per cluster
+  fps_representatives: 10 # Number of FPS representatives per cluster
+
+# ── Global Clip Embeddings ────────────────────────────────────
+global_clips:
+  clip_duration: 10 # seconds per non-overlapping clip
+  num_frames: 16 # frames sampled per clip for embedding
+  thumbnail_width: 320 # full-scene thumbnail width (aspect-ratio preserved)
+  umap:
+    n_neighbors: 5
+    min_dist: 0.05
+    metric: cosine
+    n_components: 2
+    random_state: 42
+  hdbscan:
+    min_cluster_size: 3
+    min_samples: 1
+    metric: euclidean
+    cluster_selection_method: eom
+  fps_representatives: 5
+  flow_width: 640 # target width for optical flow grid (height computed proportionally)
+  median_frame_width: 640 # target width for median frame JPEG
 
 # ── Qdrant Vector Database ────────────────────────────────────
 qdrant:
@@ -42,7 +62,12 @@ qdrant:
   port: 6333
   tracklets_collection: tracklets
   videos_collection: videos
+  global_clips_collection: global_clips
   vector_dim: 768 # VideoPrism LvT base embedding dimension
+  timeout_seconds: 60 # httpx read timeout for Qdrant client (seconds)
+
+# ── Checkpoint / Resume ───────────────────────────────────────
+cache_dir: .indexer_cache  # directory for intermediate checkpoint files
 
 # ── Thumbnail Generation ──────────────────────────────────────
 thumbnails:

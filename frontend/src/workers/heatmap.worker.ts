@@ -44,6 +44,7 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
     if (grid[i] > maxVal) maxVal = grid[i];
   }
 
-  // Transfer the buffer to avoid copying
-  self.postMessage({ grid, maxVal }, [grid.buffer]);
+  // Transfer the buffer to avoid copying — cast needed because tsconfig uses DOM lib not webworker lib
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (self as any).postMessage({ grid, maxVal }, [grid.buffer]);
 };

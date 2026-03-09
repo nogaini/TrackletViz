@@ -30,6 +30,32 @@ export function pointInPolygon(
   return inside;
 }
 
+/** Convert HSL (h: 0-360, s: 0-1, l: 0-1) to RGB (0-255 each). */
+export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  };
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+/** Convert HSV (h: 0-360, s: 0-1, v: 0-1) to RGB (0-255 each).
+ *  v=0 → black, s=1 v=1 → fully saturated — standard optical flow encoding. */
+export function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const i = Math.floor(h / 60) % 6;
+  const f = h / 60 - Math.floor(h / 60);
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+  const rows: [number, number, number][] = [
+    [v, t, p], [q, v, p], [p, v, t],
+    [p, q, v], [t, p, v], [v, p, q],
+  ];
+  const [r, g, b] = rows[i];
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
 /** Merge overlapping [start, end] intervals. */
 export function mergeIntervals(
   intervals: [number, number][],

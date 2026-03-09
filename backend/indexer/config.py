@@ -48,12 +48,30 @@ class ClusteringConfig:
 
 
 @dataclass
+class GlobalClipsConfig:
+    clip_duration: float = 10.0
+    num_frames: int = 16
+    thumbnail_width: int = 320
+    flow_width: int = 160        # target width for downscaled optical flow grid
+    median_frame_width: int = 640  # target width for median frame JPEG
+    umap: UMAPConfig = field(default_factory=lambda: UMAPConfig(
+        n_neighbors=5, min_dist=0.05, metric="cosine", n_components=2, random_state=42
+    ))
+    hdbscan: HDBSCANConfig = field(default_factory=lambda: HDBSCANConfig(
+        min_cluster_size=3, min_samples=1, metric="euclidean", cluster_selection_method="eom"
+    ))
+    fps_representatives: int = 5
+
+
+@dataclass
 class QdrantConfig:
     host: str = "localhost"
     port: int = 6333
     tracklets_collection: str = "tracklets"
     videos_collection: str = "videos"
+    global_clips_collection: str = "global_clips"
     vector_dim: int = 1024
+    timeout_seconds: int = 60
 
 
 @dataclass
@@ -74,6 +92,8 @@ class AppConfig:
     clustering: ClusteringConfig = field(default_factory=ClusteringConfig)
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
     thumbnails: ThumbnailConfig = field(default_factory=ThumbnailConfig)
+    global_clips: GlobalClipsConfig = field(default_factory=GlobalClipsConfig)
+    cache_dir: str = ".indexer_cache"
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────
@@ -136,7 +156,9 @@ def load_config(path: str) -> AppConfig:
         port=q.get("port", 6333),
         tracklets_collection=q.get("tracklets_collection", "tracklets"),
         videos_collection=q.get("videos_collection", "videos"),
+        global_clips_collection=q.get("global_clips_collection", "global_clips"),
         vector_dim=q.get("vector_dim", 1024),
+        timeout_seconds=q.get("timeout_seconds", 60),
     )
 
     t = raw.get("thumbnails", {})
@@ -148,10 +170,39 @@ def load_config(path: str) -> AppConfig:
         padding=t.get("padding", 8),
     )
 
+    gc = raw.get("global_clips", {})
+    gcu = gc.get("umap", {})
+    gch = gc.get("hdbscan", {})
+    global_clips_cfg = GlobalClipsConfig(
+        clip_duration=gc.get("clip_duration", 10.0),
+        num_frames=gc.get("num_frames", 16),
+        thumbnail_width=gc.get("thumbnail_width", 320),
+        flow_width=gc.get("flow_width", 160),
+        median_frame_width=gc.get("median_frame_width", 640),
+        umap=UMAPConfig(
+            n_neighbors=gcu.get("n_neighbors", 5),
+            min_dist=gcu.get("min_dist", 0.05),
+            metric=gcu.get("metric", "cosine"),
+            n_components=gcu.get("n_components", 2),
+            random_state=gcu.get("random_state", 42),
+        ),
+        hdbscan=HDBSCANConfig(
+            min_cluster_size=gch.get("min_cluster_size", 3),
+            min_samples=gch.get("min_samples", 1),
+            metric=gch.get("metric", "euclidean"),
+            cluster_selection_method=gch.get("cluster_selection_method", "eom"),
+        ),
+        fps_representatives=gc.get("fps_representatives", 5),
+    )
+
+    cache_dir = raw.get("cache_dir", ".indexer_cache")
+
     return AppConfig(
         processing=processing,
         videoprism=videoprism,
         clustering=clustering,
         qdrant=qdrant,
         thumbnails=thumbnails,
+        global_clips=global_clips_cfg,
+        cache_dir=cache_dir,
     )

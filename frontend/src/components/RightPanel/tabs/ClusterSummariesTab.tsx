@@ -1,12 +1,12 @@
-import { useCallback, useRef, useState } from "react";
-import { videoStreamUrl } from "../../../lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchTrackletBatch, videoStreamUrl } from "../../../lib/api";
 import {
   BBOX_COLOR,
   getClusterColorHex,
   speedToColor,
 } from "../../../lib/colors";
 import { useStore } from "../../../stores/useStore";
-import type { TrackletMetadata } from "../../../types/index";
+import type { BoundingBox, TrackletMetadata } from "../../../types/index";
 import LazyThumbnail from "../../shared/LazyThumbnail";
 
 interface Props {
@@ -28,6 +28,30 @@ function TrackletModal({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Fetch bboxes on mount if not already available (they're stripped from the lite list endpoint)
+  const [bboxes, setBboxes] = useState<BoundingBox[]>(tracklet.bounding_boxes ?? []);
+  const [bboxCenters, setBboxCenters] = useState<[number, number][]>(tracklet.bbox_centers ?? []);
+  const bboxesRef = useRef<BoundingBox[]>(tracklet.bounding_boxes ?? []);
+  const bboxCentersRef = useRef<[number, number][]>(tracklet.bbox_centers ?? []);
+
+  useEffect(() => {
+    if (bboxesRef.current.length > 0) return;
+    fetchTrackletBatch([tracklet.tracklet_id]).then(([full]) => {
+      if (full?.bounding_boxes?.length) {
+        bboxesRef.current = full.bounding_boxes;
+        setBboxes(full.bounding_boxes);
+      }
+      if (full?.bbox_centers?.length) {
+        bboxCentersRef.current = full.bbox_centers;
+        setBboxCenters(full.bbox_centers);
+      }
+    });
+  }, [tracklet.tracklet_id]);
+
+  // Keep refs in sync with state for use in the timeupdate handler (avoids stale closure)
+  useEffect(() => { bboxesRef.current = bboxes; }, [bboxes]);
+  useEffect(() => { bboxCentersRef.current = bboxCenters; }, [bboxCenters]);
+
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -40,8 +64,8 @@ function TrackletModal({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const boxes = tracklet.bounding_boxes;
-    if (boxes.length === 0) return;
+    const boxes = bboxesRef.current;
+    if (!boxes || boxes.length === 0) return;
     let best = boxes[0];
     let bestDiff = Math.abs(boxes[0].timestamp - video.currentTime);
     for (const b of boxes) {
@@ -63,8 +87,8 @@ function TrackletModal({
     );
 
     // Draw speed-colored track line
-    const centers = tracklet.bbox_centers;
-    const speeds = tracklet.bounding_boxes.map((b) => b.speed);
+    const centers = bboxCentersRef.current;
+    const speeds = boxes.map((b) => b.speed);
     const maxSpeed = Math.max(...speeds, 1);
     for (let i = 1; i < centers.length; i++) {
       const [r, g, b] = speedToColor(speeds[i], maxSpeed);

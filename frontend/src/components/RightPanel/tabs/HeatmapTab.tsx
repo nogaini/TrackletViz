@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchTrackletBatch } from '../../../lib/api';
 import { useStore } from '../../../stores/useStore';
-import type { TrackletMetadata } from '../../../types/index';
+import type { BoundingBox, TrackletMetadata } from '../../../types/index';
 
 interface Props {
   selectedTracklets: TrackletMetadata[];
@@ -10,10 +11,52 @@ const GRID_W = 128;
 const GRID_H = 72;
 
 export default function HeatmapTab({ selectedTracklets }: Props) {
-  const { videoMetadata } = useStore();
+  const { videoMetadata, selectedTrackletIds } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const workerRef = useRef<Worker | null>(null);
   const [computing, setComputing] = useState(false);
+
+  const selectionKey = useMemo(
+    () => [...selectedTrackletIds].sort().join(','),
+    [selectedTrackletIds],
+  );
+
+  const [bboxMap, setBboxMap] = useState<Map<string, BoundingBox[]>>(new Map());
+  const [bboxLoading, setBboxLoading] = useState(false);
+
+  useEffect(() => {
+    setBboxMap(new Map());
+    const ids = selectionKey ? selectionKey.split(',') : [];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    const CHUNK_SIZE = 20;
+
+    async function loadChunks() {
+      setBboxLoading(true);
+      try {
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+          if (cancelled) break;
+          const chunk = ids.slice(i, i + CHUNK_SIZE);
+          try {
+            const results = await fetchTrackletBatch(chunk);
+            if (!cancelled) {
+              setBboxMap(prev => {
+                const next = new Map(prev);
+                for (const r of results) {
+                  if (r.bounding_boxes?.length) next.set(r.tracklet_id, r.bounding_boxes);
+                }
+                return next;
+              });
+            }
+          } catch { /* skip failed chunk */ }
+        }
+      } finally {
+        if (!cancelled) setBboxLoading(false);
+      }
+    }
+    loadChunks();
+    return () => { cancelled = true; };
+  }, [selectionKey]);
 
   // Keep a stable worker across renders
   useEffect(() => {
@@ -28,6 +71,7 @@ export default function HeatmapTab({ selectedTracklets }: Props) {
   }, []);
 
   useEffect(() => {
+    if (bboxLoading) return;
     const canvas = canvasRef.current;
     const worker = workerRef.current;
     if (!canvas) return;
@@ -64,10 +108,10 @@ export default function HeatmapTab({ selectedTracklets }: Props) {
       setComputing(false);
     };
 
-    // Collect all bounding boxes for the worker
+    // Collect all bounding boxes for the worker (using progressively-loaded bboxMap)
     const bboxes: { x1: number; y1: number; x2: number; y2: number }[] = [];
     for (const t of selectedTracklets) {
-      for (const box of t.bounding_boxes) {
+      for (const box of (bboxMap.get(t.tracklet_id) ?? [])) {
         bboxes.push({ x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2 });
       }
     }
@@ -116,7 +160,7 @@ export default function HeatmapTab({ selectedTracklets }: Props) {
         ctx.fillRect(0, 0, vw, vh);
       });
     }
-  }, [selectedTracklets, videoMetadata]);
+  }, [selectedTracklets, videoMetadata, bboxMap, bboxLoading]);
 
   if (selectedTracklets.length === 0) {
     return (
@@ -134,7 +178,15 @@ export default function HeatmapTab({ selectedTracklets }: Props) {
           className="max-w-full max-h-full object-contain"
           style={{ imageRendering: 'pixelated' }}
         />
-        {computing && (
+        {bboxLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <div className="flex items-center gap-2 bg-gray-900/90 px-4 py-2 rounded-lg">
+              <div className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+              <span className="text-xs text-gray-300">Loading tracklet data…</span>
+            </div>
+          </div>
+        )}
+        {!bboxLoading && computing && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40">
             <div className="flex items-center gap-2 bg-gray-900/90 px-4 py-2 rounded-lg">
               <div className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
