@@ -273,16 +273,16 @@ Run these in order:
 
 ## 9. Using the UI
 
-### Header — Video Selector and Local/Global Toggle
+### Header — Video Selector
 
 The dropdown in the header lists all indexed videos. Videos indexed with `--tag` display their tag; others display their raw `video_id`. Select a video to load its tracklets and metadata. The scatter plot and all tabs update automatically.
 
-The **Local / Global** toggle button (next to the video selector) switches the entire UI between two views:
+### 2D Embeddings Panel (left side)
+
+At the top-center of the embeddings panel, two buttons — **Local** and **Global** — switch the entire UI between views:
 
 - **Local view** — scatter plot shows individual tracklet embeddings; tabs show tracklet-level analyses
 - **Global view** — scatter plot shows scene-level clip embeddings (one point per `clip_duration`-second window); tabs show clip-level analyses
-
-### 2D Embeddings Panel (left side)
 
 The main scatter plot renders embeddings as points positioned by their UMAP 2D coordinates. Behavior differs slightly between views:
 
