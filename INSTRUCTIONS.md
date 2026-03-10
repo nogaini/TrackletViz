@@ -279,7 +279,7 @@ The dropdown in the header lists all indexed videos. Videos indexed with `--tag`
 
 ### 2D Embeddings Panel (left side)
 
-At the top-center of the embeddings panel, two buttons — **Local** and **Global** — switch the entire UI between views:
+In the header, two buttons — **Local** and **Global** — switch the entire UI between views:
 
 - **Local view** — scatter plot shows individual tracklet embeddings; tabs show tracklet-level analyses
 - **Global view** — scatter plot shows scene-level clip embeddings (one point per `clip_duration`-second window); tabs show clip-level analyses

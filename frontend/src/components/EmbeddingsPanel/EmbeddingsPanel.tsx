@@ -94,7 +94,6 @@ export default function EmbeddingsPanel() {
     setGlobalLegendFocus,
     // view
     viewMode,
-    setViewMode,
     // global
     globalClips,
     selectedClipIds,
@@ -873,26 +872,6 @@ export default function EmbeddingsPanel() {
           Click a second clip to compare • Esc to cancel
         </div>
       )}
-
-      {/* Local / Global view toggle */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-0.5 bg-gray-800/90 backdrop-blur rounded-lg p-1 border border-gray-700">
-        <button
-          onClick={() => setViewMode('local')}
-          className={`px-3 py-1 text-xs rounded-md font-medium transition-colors ${
-            viewMode === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          Local
-        </button>
-        <button
-          onClick={() => setViewMode('global')}
-          className={`px-3 py-1 text-xs rounded-md font-medium transition-colors ${
-            viewMode === 'global' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          Global
-        </button>
-      </div>
 
       {/* Selection mode buttons */}
       <div className="absolute top-3 left-3 z-10 flex gap-1 bg-gray-800/90 backdrop-blur rounded-lg p-1">
