@@ -27,7 +27,7 @@ VideoPrism is a Google DeepMind model not available on PyPI. Clone it and instal
 ```bash
 git clone https://github.com/google-deepmind/videoprism
 cd videoprism
-/home/jobin/Projects/TrackletViz/backend/.venv/bin/pip install -e .
+./backend/.venv/bin/pip install -e .
 cd ..
 ```
 
