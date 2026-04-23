@@ -1,6 +1,6 @@
 # TrackletViz
 
->TrackletViz processes surveillance videos to extract object tracklets, compute high-dimensional embeddings with VideoPrism, reduce them to 2D with UMAP, cluster them with HDBSCAN, and store everything in Qdrant. The interactive frontend lets you explore, filter, and search at the local level (tracklets) or the global level (scene) visually.
+>TrackletViz processes videos to extract object tracklets, compute high-dimensional embeddings with VideoPrism, reduce them to 2D with UMAP, cluster them with HDBSCAN, and store everything in Qdrant. The interactive frontend lets you explore, filter, and search at the local level (tracklets) or the global level (scene) visually.
 
 ---
 
