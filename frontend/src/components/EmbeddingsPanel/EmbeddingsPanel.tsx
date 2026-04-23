@@ -108,6 +108,7 @@ export default function EmbeddingsPanel() {
     setTwoPointPending,
     highlightedGlobalClusterId,
     highlightedClipId,
+    highlightedSpatialClipIds,
   } = useStore();
 
   // Derived data
@@ -261,6 +262,13 @@ export default function EmbeddingsPanel() {
             let alpha = 220;
             if (globalSelectionMode !== "twopoint" && hasSelection && !isSelected) alpha = Math.min(alpha, 40);
             if (isHighlightedCluster) alpha = 255;
+
+            // Spatial bucket highlight — white for matching clips, dim for the rest
+            if (highlightedSpatialClipIds !== null) {
+              if (highlightedSpatialClipIds.has(d.clip_id)) return [255, 255, 255, 230];
+              return [r, g, b, DIM_ALPHA];
+            }
+
             return [r, g, b, alpha];
           },
           getRadius: (d: GlobalClipMetadata): number => {
@@ -316,6 +324,7 @@ export default function EmbeddingsPanel() {
               globalMinTime,
               globalMaxTime,
               globalLegendFocus,
+              highlightedSpatialClipIds,
             ],
             getRadius: [highlightedClipId, highlightedGlobalClusterId, globalSelectionMode],
           },
@@ -413,6 +422,7 @@ export default function EmbeddingsPanel() {
     globalMaxTime,
     legendFocus,
     globalLegendFocus,
+    highlightedSpatialClipIds,
     setTwoPointPending,
     setSelectedClipIds,
     setTwoPointSelection,

@@ -9,9 +9,10 @@ import GlobalVideoTab from './tabs/GlobalVideoTab';
 import GlobalHeatmapTab from './tabs/GlobalHeatmapTab';
 import GlobalClusterTab from './tabs/GlobalClusterTab';
 import GlobalSearchTab from './tabs/GlobalSearchTab';
+import GlobalSummarizationsTab from './tabs/GlobalSummarizationsTab';
 
 const LOCAL_TABS = ['Video', 'Heatmap', 'Tracks', 'Clusters', 'Search'];
-const GLOBAL_TABS = ['Video', 'Heatmap', 'Clusters', 'Search'];
+const GLOBAL_TABS = ['Video', 'Heatmap', 'Clusters', 'Search', 'Summarizations'];
 
 export default function RightPanel() {
   const {
@@ -61,6 +62,7 @@ export default function RightPanel() {
           {activeGlobalTabIndex === 1 && <GlobalHeatmapTab />}
           {activeGlobalTabIndex === 2 && <GlobalClusterTab />}
           {activeGlobalTabIndex === 3 && <GlobalSearchTab />}
+          {activeGlobalTabIndex === 4 && <GlobalSummarizationsTab />}
         </div>
       </div>
     );

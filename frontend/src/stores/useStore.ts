@@ -37,6 +37,7 @@ interface AppState {
   highlightedGlobalClusterId: number | null;
   highlightedClipId: string | null;
   activeGlobalTabIndex: number;
+  highlightedSpatialClipIds: Set<string> | null;
 
   // ── Actions — local ───────────────────────────────────────────────────
   setVideos: (videos: VideoSummary[]) => void;
@@ -66,6 +67,7 @@ interface AppState {
   setHighlightedGlobalClusterId: (id: number | null) => void;
   setHighlightedClipId: (id: string | null) => void;
   setActiveGlobalTabIndex: (index: number) => void;
+  setHighlightedSpatialClipIds: (ids: Set<string> | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -98,6 +100,7 @@ export const useStore = create<AppState>((set) => ({
   highlightedGlobalClusterId: null,
   highlightedClipId: null,
   activeGlobalTabIndex: 0,
+  highlightedSpatialClipIds: null,
 
   // ── Actions — local ───────────────────────────────────────────────────
   setVideos: (videos) => set({ videos }),
@@ -141,4 +144,5 @@ export const useStore = create<AppState>((set) => ({
     set({ highlightedGlobalClusterId }),
   setHighlightedClipId: (highlightedClipId) => set({ highlightedClipId }),
   setActiveGlobalTabIndex: (activeGlobalTabIndex) => set({ activeGlobalTabIndex }),
+  setHighlightedSpatialClipIds: (highlightedSpatialClipIds) => set({ highlightedSpatialClipIds }),
 }));
