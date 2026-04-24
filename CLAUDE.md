@@ -26,12 +26,13 @@ TrackletViz is a system for visualizing and summarizing object tracklets in surv
 │  ┌─────────────────────────────────────────────────────────────────────┐│
 │  │                          Header (Logo + Title + Video Selector)     ││
 │  ├─────────────────────────────┬───────────────────────────────────────┤│
-│  │                             │  Tab 1: Video Player + Timeline       ││
-│  │    2D Embeddings Panel      │  Tab 2: Heatmap Overlay               ││
-│  │    (WebGL-based)            │  Tab 3: Track List + Filters          ││
-│  │    - Lasso/Rect Selection   │  Tab 4: Cluster Summaries             ││
-│  │    - Color by Class/Cluster │  Tab 5: Video Moment Retrieval        ││
-│  │    - Thumbnail Tooltips     │                                       ││
+│  │                             │  Local: Tab 1: Video Player + Timeline││
+│  │    2D Embeddings Panel      │  Local: Tab 2: Heatmap Overlay        ││
+│  │    (WebGL-based)            │  Local: Tab 3: Track List + Filters   ││
+│  │    - Lasso/Rect Selection   │  Local: Tab 4: Cluster Summaries      ││
+│  │    - Color by Class/Cluster │  Local: Tab 5: Video Moment Retrieval ││
+│  │    - Thumbnail Tooltips     │  Global: Video / Heatmap / Clusters / ││
+│  │                             │         Search / Summarizations       ││
 │  └─────────────────────────────┴───────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -474,6 +475,27 @@ Container component with tab navigation for the five panels described below.
 - Display similarity score on each card
 - Sort by score (highest first)
 - Clicking a card opens a modal with video player looping that tracklet with bounding boxes
+
+### 4.10 Global Tab: Summarizations
+
+**Purpose:** Provide aggregate spatial and temporal overviews of all activity in the video without requiring a manual tracklet selection.
+
+This tab is only visible in Global View mode. It has two subtabs: **Spatial** and **Temporal**.
+
+**Spatial subtab:**
+- Divides the video into N time buckets (1–16, configurable) and renders a 128×72 occupancy heatmap per bucket
+- Two accumulation modes: Centroid (bbox center only) and BBox (full bounding box area)
+- Class filter toggles limit which object classes contribute to the grid
+- Clicking a bucket sets `highlightedSpatialClipIds` in the Zustand store, which highlights matching clips in the global scatter plot and auto-switches the color mode to temporal
+- Module-level caches (`bboxCache`, `gridCache`) persist across tab switches; batch-fetch bboxes in chunks of 20 via POST `/api/tracklets/batch`
+
+**Temporal subtab:**
+- SVG activity chart with per-class polylines; Y-axis switchable between Count and Speed (px/s)
+- Configurable bucket duration (presets: 5 m, 10 m, 30 m, 1 h; custom: min 300 s)
+- Keyframe storyboard below the chart: k representative clips per bucket (k = 1–5); uses existing `is_representative` and `start_time`/`end_time` fields from `/api/global-clips/{videoId}`
+- Thumbnail click opens a loop modal with the video player looping the clip's time segment
+- Class filter badges control chart lines and storyboard clips
+- All state (bucket duration, metric, k, selected classes) persists across tab switches
 
 ---
 

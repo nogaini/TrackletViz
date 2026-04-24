@@ -221,6 +221,26 @@ The Global Cluster Summaries tab lists clusters from the clip-level HDBSCAN assi
 
 The Global Search tab accepts natural language queries and retrieves semantically similar clips by embedding the query and performing cosine similarity search against clip embeddings. Results are displayed as cards with clip index, time range, and similarity score.
 
+#### 2.3.6 Global Summarizations — Activity Summaries
+
+The Summarizations tab provides two subtabs that compute aggregate views over the entire video without requiring a manual clip selection.
+
+##### Spatial Subtab
+
+The Spatial subtab divides the video duration into N equal-length time buckets (N configurable from 1 to 16) and computes a 128×72 spatial occupancy heatmap for each bucket. For every bounding box recorded in the bucket's time window, either the centroid cell or all cells covered by the full bbox are incremented (user-selectable). The resulting grid is normalized and rendered with a blue-to-red color gradient: cool colors indicate sparse regions, warm colors indicate high-activity zones.
+
+Class filter badges let the user include or exclude specific object classes from the grid computation. Clicking a bucket highlights the corresponding global clips in the scatter plot (setting `highlightedSpatialClipIds` in application state) and auto-switches the scatter plot color mode to temporal so clip timing is immediately visible.
+
+Bounding box data is fetched once per video via `POST /api/tracklets/batch` in chunks of 20, then cached in module-level maps that survive tab switching. Grid results are additionally cached per configuration key (video ID × bucket count × mode × class set) to avoid redundant computation.
+
+##### Temporal Subtab
+
+The Temporal subtab renders a per-class SVG activity chart showing how object activity evolves over configurable time buckets. Two metrics are supported: **Count** (number of distinct objects active in each bucket) and **Speed** (average speed in px/s across all bboxes in the bucket). The bucket duration is set using preset buttons (5 min, 10 min, 30 min, 1 h) or a custom numeric input with a 300 s floor.
+
+Below the activity chart, a **keyframe storyboard** displays k representative clip thumbnails per time bucket (k from 1 to 5). Representative clips are identified using the `is_representative` flag stored with each clip at indexing time. Clicking a storyboard thumbnail opens a loop modal that plays and loops the clip's time segment with the same video player mechanics used throughout the application.
+
+Class filter badges apply to both the activity chart and the storyboard. All subtab configuration (bucket duration, metric, k, selected classes) is preserved in component-level state and survives tab-switching.
+
 ---
 
 ### 2.4 Cross-Panel Coherence

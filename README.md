@@ -367,6 +367,27 @@ Three sub-tabs provide different spatial analyses of the selected clips:
 - Results are shown as cards sorted by similarity score (highest first)
 - Click a card to open a looping video player for that clip
 
+#### Global Tab: Summarizations
+
+Two subtabs provide aggregate statistical views of activity across the full video.
+
+##### Spatial Subtab
+
+- Divides the video into 1–16 configurable time buckets and computes a **2D occupancy heatmap** (128×72 grid) for each bucket using the bounding boxes of all tracklets
+- Two accumulation modes: **Centroid** (increments the grid cell under each bbox center) and **BBox** (increments all cells covered by the full bbox)
+- Color gradient runs blue (low density) → red (high density); a legend shows the scale
+- **Class filter** badges let you include or exclude specific object classes from the computation
+- **Click a bucket** to highlight the corresponding global clips in the scatter plot (color mode auto-switches to temporal)
+- Bbox data is fetched once per video and cached; grid results are cached per configuration to avoid recomputation on subtab revisits
+
+##### Temporal Subtab
+
+- Shows a per-class **SVG activity chart** over configurable time buckets with two switchable metrics: **Count** (number of active objects per bucket) and **Speed** (average speed in px/s)
+- Bucket duration is set via preset buttons (5 min, 10 min, 30 min, 1 h) or a custom numeric input (minimum 300 s)
+- Below the chart, a **keyframe storyboard** shows representative clip thumbnails per time bucket; the number of clips per bucket (k = 1–5) is configurable
+- **Click a storyboard thumbnail** to open a loop modal that plays and loops that clip's time segment
+- Class filter badges control which classes appear in both the chart and the storyboard
+
 ---
 
 ## 9. API Reference
