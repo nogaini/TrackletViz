@@ -58,8 +58,7 @@ const THUMB_H = 54;
 
 // Bucket duration presets: [label, seconds]
 const PRESETS: [string, number][] = [
-  ['10s', 10], ['30s', 30], ['1m', 60], ['5m', 300],
-  ['10m', 600], ['30m', 1800], ['1h', 3600],
+  ['5m', 300], ['10m', 600], ['30m', 1800], ['1h', 3600],
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -82,7 +81,7 @@ let saved: {
   metric: 'count' | 'speed';
   k: number;
   selectedClasses: Set<string> | null;
-} = { videoId: '', bucketDuration: 10, metric: 'count', k: 1, selectedClasses: null };
+} = { videoId: '', bucketDuration: 300, metric: 'count', k: 1, selectedClasses: null };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function TemporalSubTab() {
@@ -110,8 +109,8 @@ export default function TemporalSubTab() {
   );
 
   // ── Config state ─────────────────────────────────────────────────────────
-  const [bucketDuration, setBucketDuration] = useState(() => sameVideo ? saved.bucketDuration : 10);
-  const [customInput, setCustomInput] = useState(() => String(sameVideo ? saved.bucketDuration : 10));
+  const [bucketDuration, setBucketDuration] = useState(() => sameVideo ? saved.bucketDuration : 300);
+  const [customInput, setCustomInput] = useState(() => String(sameVideo ? saved.bucketDuration : 300));
   const [metric, setMetric] = useState<'count' | 'speed'>(() => sameVideo ? saved.metric : 'count');
   const [k, setK] = useState(() => sameVideo ? saved.k : 1);
   const [selectedClasses, setSelectedClasses] = useState<Set<string>>(() =>
@@ -253,11 +252,11 @@ export default function TemporalSubTab() {
             ))}
           </div>
           <input
-            type="number" min={1} value={customInput}
+            type="number" min={300} value={customInput}
             onChange={e => {
               setCustomInput(e.target.value);
               const n = parseFloat(e.target.value);
-              if (!isNaN(n) && n > 0) setBucketDuration(n);
+              if (!isNaN(n) && n >= 300) setBucketDuration(n);
             }}
             className="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-xs text-white text-center focus:outline-none focus:border-blue-500"
             title="Custom bucket duration in seconds"
