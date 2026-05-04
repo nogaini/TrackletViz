@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import BasicSubTab from './summarizations/BasicSubTab';
 import SpatialSubTab from './summarizations/SpatialSubTab';
 import TemporalSubTab from './summarizations/TemporalSubTab';
 
-const SUBTABS = ['Spatial', 'Temporal'];
+const SUBTABS = ['Basic', 'Spatial', 'Temporal'];
 
 export default function GlobalSummarizationsTab() {
   const [activeSubTab, setActiveSubTab] = useState(0);
@@ -25,8 +26,9 @@ export default function GlobalSummarizationsTab() {
         ))}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeSubTab === 0 && <SpatialSubTab />}
-        {activeSubTab === 1 && <TemporalSubTab />}
+        {activeSubTab === 0 && <BasicSubTab />}
+        {activeSubTab === 1 && <SpatialSubTab />}
+        {activeSubTab === 2 && <TemporalSubTab />}
       </div>
     </div>
   );

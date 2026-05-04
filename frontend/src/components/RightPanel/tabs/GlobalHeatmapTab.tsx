@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchGlobalClipDetail, videoStreamUrl } from "../../../lib/api";
-import { hslToRgb, hsvToRgb } from "../../../lib/utils";
+import { hslToRgb } from "../../../lib/utils";
 import { useStore } from "../../../stores/useStore";
 import type { GlobalClipMetadata } from "../../../types/index";
 
-type SubTab = "state-change" | "activity-shift" | "illumination-shift";
+type SubTab = "illumination-change" | "illumination-shift";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -29,11 +29,6 @@ async function decodeBase64ToBlurredImageData(b64: string): Promise<ImageData> {
   ctx.filter = "blur(4px)";
   ctx.drawImage(bmp, 0, 0);
   return ctx.getImageData(0, 0, bmp.width, bmp.height);
-}
-
-function decodeFlowBytes(b64: string): Float32Array {
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  return new Float32Array(bytes.buffer);
 }
 
 // ── Shared legend component ───────────────────────────────────────────────
@@ -125,9 +120,9 @@ function ClipVideoRow({
   );
 }
 
-// ── Sub-tab 1: State Change ───────────────────────────────────────────────
+// ── Sub-tab 1: Illumination Change ───────────────────────────────────────
 
-function StateChangeHeatmap({
+function IlluminationChangeHeatmap({
   clip1,
   clip2,
 }: {
@@ -248,159 +243,7 @@ function StateChangeHeatmap({
   );
 }
 
-// ── Sub-tab 2: Activity Shift ─────────────────────────────────────────────
-
-function ActivityShiftHeatmap({
-  clip1,
-  clip2,
-}: {
-  clip1: GlobalClipMetadata;
-  clip2: GlobalClipMetadata;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const legendCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const [d1, d2] = await Promise.all([
-        clip1.optical_flow_b64 ? clip1 : fetchGlobalClipDetail(clip1.clip_id),
-        clip2.optical_flow_b64 ? clip2 : fetchGlobalClipDetail(clip2.clip_id),
-      ]);
-
-      if (!d1.optical_flow_b64 || !d2.optical_flow_b64) {
-        setError("Optical flow not available for one or both clips");
-        setBusy(false);
-        return;
-      }
-
-      const fw = d1.flow_width;
-      const fh = d1.flow_height;
-      const f1 = decodeFlowBytes(d1.optical_flow_b64);
-      const f2 = decodeFlowBytes(d2.optical_flow_b64);
-
-      // Difference flow
-      const diff = new Float32Array(fh * fw * 2);
-      let maxMag = 0;
-      for (let i = 0; i < fh * fw; i++) {
-        const du = f2[i * 2] - f1[i * 2];
-        const dv = f2[i * 2 + 1] - f1[i * 2 + 1];
-        diff[i * 2] = du;
-        diff[i * 2 + 1] = dv;
-        const mag = Math.sqrt(du * du + dv * dv);
-        if (mag > maxMag) maxMag = mag;
-      }
-
-      const canvas = canvasRef.current;
-      if (!canvas) {
-        setBusy(false);
-        return;
-      }
-
-      // Dense HSV image: H = direction, S = 1, V = magnitude (black = no motion)
-      canvas.width = fw;
-      canvas.height = fh;
-      const ctx = canvas.getContext("2d")!;
-
-      const imageData = new ImageData(fw, fh);
-      for (let y = 0; y < fh; y++) {
-        for (let x = 0; x < fw; x++) {
-          const du = diff[(y * fw + x) * 2];
-          const dv = diff[(y * fw + x) * 2 + 1];
-          const mag = Math.sqrt(du * du + dv * dv);
-          const hue = ((Math.atan2(dv, du) * 180) / Math.PI + 360) % 360;
-          const val = mag / (maxMag || 1);
-          const [r, g, b] = hsvToRgb(hue, 1.0, val);
-          const idx = (y * fw + x) * 4;
-          imageData.data[idx] = r;
-          imageData.data[idx + 1] = g;
-          imageData.data[idx + 2] = b;
-          imageData.data[idx + 3] = 255;
-        }
-      }
-
-      ctx.putImageData(imageData, 0, 0);
-
-      // Draw color wheel legend (H = direction, V = radius/max → magnitude)
-      const legCanvas = legendCanvasRef.current;
-      if (legCanvas) {
-        legCanvas.width = 100;
-        legCanvas.height = 100;
-        const lctx = legCanvas.getContext("2d")!;
-        const imgData = lctx.createImageData(100, 100);
-        for (let ly = 0; ly < 100; ly++) {
-          for (let lx = 0; lx < 100; lx++) {
-            const dx = lx - 50;
-            const dy = ly - 50;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist > 50) {
-              imgData.data[(ly * 100 + lx) * 4 + 3] = 0;
-              continue;
-            }
-            const hue = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
-            const val = dist / 50;
-            const [r, g, b] = hsvToRgb(hue, 1.0, val);
-            const idx = (ly * 100 + lx) * 4;
-            imgData.data[idx] = r;
-            imgData.data[idx + 1] = g;
-            imgData.data[idx + 2] = b;
-            imgData.data[idx + 3] = 200;
-          }
-        }
-        lctx.putImageData(imgData, 0, 0);
-      }
-    } catch (e: unknown) {
-      setError(String(e));
-    }
-    setBusy(false);
-  }, [clip1, clip2]);
-
-  useEffect(() => {
-    run();
-  }, [run]);
-
-  return (
-    <div className="h-full flex flex-col bg-black overflow-hidden">
-      {/* row: canvas | color-wheel sidebar */}
-      <div className="flex-1 flex min-h-0">
-        <div className="flex-1 flex items-center justify-center p-2 relative">
-          <canvas
-            ref={canvasRef}
-            className="h-full w-auto max-w-full border border-white/30"
-          />
-          {busy && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-              <p className="text-gray-300 text-sm">
-                Computing optical flow diff…
-              </p>
-            </div>
-          )}
-          {error && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-              <p className="text-red-400 text-sm">{error}</p>
-            </div>
-          )}
-        </div>
-        <div className="shrink-0 flex flex-col items-center justify-center gap-1.5 px-2">
-          <canvas
-            ref={legendCanvasRef}
-            width={100}
-            height={100}
-            className="rounded-full border border-gray-600"
-            style={{ width: 100, height: 100 }}
-          />
-          <span className="text-[9px] text-gray-400">Direction</span>
-        </div>
-      </div>
-      <ClipVideoRow clip1={clip1} clip2={clip2} />
-    </div>
-  );
-}
-
-// ── Sub-tab 3: Illumination Shift ─────────────────────────────────────────
+// ── Sub-tab 2: Illumination Shift ─────────────────────────────────────────
 
 function IlluminationShiftHeatmap({
   clip1,
@@ -528,7 +371,7 @@ function IlluminationShiftHeatmap({
 
 export default function GlobalHeatmapTab() {
   const { twoPointSelection } = useStore();
-  const [subTab, setSubTab] = useState<SubTab>("state-change");
+  const [subTab, setSubTab] = useState<SubTab>("illumination-change");
 
   const hasTwoPoints = twoPointSelection !== null;
 
@@ -537,14 +380,12 @@ export default function GlobalHeatmapTab() {
       {/* Sub-tab bar */}
       <div className="flex border-b border-gray-700 bg-gray-900 shrink-0 text-xs">
         {(
-          ["state-change", "activity-shift", "illumination-shift"] as SubTab[]
+          ["illumination-change", "illumination-shift"] as SubTab[]
         ).map((st) => {
           const label =
-            st === "state-change"
-              ? "State Change"
-              : st === "activity-shift"
-                ? "Activity Shift"
-                : "Illumination Shift";
+            st === "illumination-change"
+              ? "Illumination Change"
+              : "Illumination Shift";
           const disabled = !hasTwoPoints;
           return (
             <button
@@ -573,14 +414,8 @@ export default function GlobalHeatmapTab() {
             Use the 2-point selection tool to select 2 representative clips
           </div>
         )}
-        {hasTwoPoints && subTab === "state-change" && (
-          <StateChangeHeatmap
-            clip1={twoPointSelection!.clip1}
-            clip2={twoPointSelection!.clip2}
-          />
-        )}
-        {hasTwoPoints && subTab === "activity-shift" && (
-          <ActivityShiftHeatmap
+        {hasTwoPoints && subTab === "illumination-change" && (
+          <IlluminationChangeHeatmap
             clip1={twoPointSelection!.clip1}
             clip2={twoPointSelection!.clip2}
           />

@@ -291,7 +291,7 @@ The main scatter plot renders embeddings as points positioned by their UMAP 2D c
 
 - **Color mode**: toggle between coloring by cluster ID or by time (chronological gradient)
 - **Selection tools**: lasso, rectangle, or no-selection mode for selecting clips
-- **2-point selection mode** (Ruler button): click to activate, then click two clip points in the scatter plot; the two selected clips are used as reference points for the Activity Shift and Illumination Shift heatmaps; press **Escape** to cancel a pending first-click
+- **2-point selection mode** (Ruler button): click to activate, then click two clip points in the scatter plot; the two selected clips are used as reference points for the Illumination Change and Illumination Shift heatmaps; press **Escape** to cancel a pending first-click
 - **Tooltip**: hover over any point to see a full-scene thumbnail of that clip
 - **Selection effect**: selected clips drive the global right-panel tabs
 
@@ -346,10 +346,9 @@ The main scatter plot renders embeddings as points positioned by their UMAP 2D c
 
 #### Global Tab: Heatmap
 
-Three sub-tabs provide different spatial analyses of the selected clips:
+Two sub-tabs provide different spatial analyses of the selected clips:
 
-- **State Change**: shows per-pixel variance across the selected clips' median frames; bright regions indicate areas of the scene that change appearance frequently across the selected time windows
-- **Activity Shift**: requires 2-point selection mode; computes the difference between the optical flow grids of the two selected clips and renders it as a quiver (arrow) plot; arrows show where motion patterns changed between the two moments
+- **Illumination Change**: requires 2-point selection mode; shows per-pixel variance across the selected clips' median frames; bright regions indicate areas of the scene that change appearance frequently across the selected time windows
 - **Illumination Shift**: requires 2-point selection mode; computes the blurred luminance difference between the two selected clips' median frames; highlights regions where lighting conditions changed
 
 #### Global Tab: Clusters

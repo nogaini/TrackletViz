@@ -205,10 +205,9 @@ The Global Video tab mirrors the Local Video Player tab, but the timeline segmen
 
 #### 2.3.3 Global Heatmap — Scene Change Analysis
 
-The Global Heatmap tab compares two clips selected in two-point mode using three sub-tabs:
+The Global Heatmap tab compares two clips selected in two-point mode using two sub-tabs:
 
-- **State Change**: Decodes the median frame (the per-pixel temporal median) of each selected clip and computes per-pixel luminance variance between the two frames. High-variance pixels are colored warm (red), low-variance pixels cool (blue), revealing locations where the scene appearance has changed between the two clips.
-- **Activity Shift**: Decodes the optical flow field (stored as a two-channel float32 grid) for each clip and visualizes the velocity vectors using hue-saturation encoding — hue represents flow direction, saturation represents magnitude. Differences between the two clips' flow fields reveal how patterns of motion have shifted over time.
+- **Illumination Change**: Decodes the median frame (the per-pixel temporal median) of each selected clip and computes per-pixel luminance variance between the two frames. High-variance pixels are colored warm (red), low-variance pixels cool (blue), revealing locations where the scene appearance has changed between the two clips.
 - **Illumination Shift**: Compares color histogram distributions between the two clip median frames, highlighting regions with different color or brightness characteristics.
 
 All sub-tab analyses are computed client-side by decoding the pre-stored auxiliary features retrieved from the server on demand.
