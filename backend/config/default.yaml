@@ -1,0 +1,93 @@
+# ─────────────────────────────────────────────────────────────
+#  TrackletViz Default Configuration
+# ─────────────────────────────────────────────────────────────
+
+# ── Detection & Tracking ──────────────────────────────────────
+processing:
+  yolo_model: yolo11n.pt         # YOLO model variant (n/s/m/l/x)
+  tracker: botsort               # BoxMOT tracker type
+  confidence_threshold: 0.3     # Minimum detection confidence
+  # COCO class IDs to track:
+  #   0=person, 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
+  target_classes: [0, 1, 2, 3, 5, 7]
+  min_tracklet_frames: 16       # Minimum frames for a valid tracklet
+  device: cuda                  # 'cuda' or 'cpu'
+
+# ── VideoPrism Embeddings ─────────────────────────────────────
+videoprism:
+  model_path: ../videoprism     # Path to cloned VideoPrism repo (added to sys.path)
+  model_name: videoprism_lvt_public_v1_base  # LvT model supports video + text
+  batch_size: 4                 # Tracklets processed per batch
+  device: cuda
+  num_frames: 16                # Frames sampled per tracklet clip
+
+# ── Clustering & Dimensionality Reduction ─────────────────────
+clustering:
+  preprocess:
+    l2_normalize: false         # Project all vectors onto the unit hypersphere before clustering
+    pre_umap_dims: 0            # >0 to UMAP-reduce to N dims before clustering (e.g. 50); 0 = disabled
+    pre_umap_n_neighbors: 15
+    pre_umap_metric: cosine
+    pre_umap_random_state: 42
+    pre_umap_min_dist: 0.0
+  umap:
+    n_neighbors: 15
+    min_dist: 0.1
+    metric: cosine
+    n_components: 2             # Output dimensionality (always 2 for viz)
+    random_state: 42
+  hdbscan:
+    min_cluster_size: 10
+    min_samples: 2              # Controls noise sensitivity
+    metric: euclidean           # Applied on original high-dim embeddings
+    cluster_selection_method: leaf
+  fps_representatives: 5        # Number of FPS representatives per cluster
+
+# ── Global Clip Embeddings ────────────────────────────────────
+global_clips:
+  clip_duration: 10             # seconds per non-overlapping clip
+  num_frames: 16                # frames sampled per clip for embedding
+  thumbnail_width: 320          # full-scene thumbnail width (aspect-ratio preserved)
+  flow_width: 640               # target width for optical flow grid (height computed proportionally)
+  median_frame_width: 640       # target width for median frame JPEG
+  umap:
+    n_neighbors: 5
+    min_dist: 0.05
+    metric: cosine
+    n_components: 2
+    random_state: 42
+  hdbscan:
+    min_cluster_size: 3
+    min_samples: 1
+    metric: euclidean
+    cluster_selection_method: eom
+  fps_representatives: 5
+
+# ── Qdrant Vector Database ────────────────────────────────────
+qdrant:
+  host: localhost
+  port: 6333
+  tracklets_collection: tracklets
+  videos_collection: videos
+  global_clips_collection: global_clips
+  vector_dim: 768               # VideoPrism LvT base embedding dimension
+  timeout_seconds: 60           # httpx read timeout for Qdrant client (seconds)
+
+# ── Checkpoint / Resume ───────────────────────────────────────
+cache_dir: .indexer_cache       # directory for intermediate checkpoint files
+
+# ── Thumbnail Generation ──────────────────────────────────────
+thumbnails:
+  width: 128
+  height: 128
+  format: jpeg
+  quality: 85
+  padding: 8                    # Pixel padding around bounding box crop
+
+# ── MLLM Cluster Descriptions ────────────────────────────────
+mllm:
+  base_url: "http://localhost:8001/v1"   # vLLM OpenAI-compatible server URL
+  model: "Qwen/Qwen2-VL-2B-Instruct"    # model name as passed to vLLM
+  max_tokens: 60                         # max tokens per description
+  timeout_s: 30.0                        # per-request timeout in seconds
+  enabled: true                          # set false to disable without removing the section
