@@ -24,8 +24,8 @@ videoprism:
 # ── Clustering & Dimensionality Reduction ─────────────────────
 clustering:
   preprocess:
-    l2_normalize: false         # Project all vectors onto the unit hypersphere before clustering
-    pre_umap_dims: 0            # >0 to UMAP-reduce to N dims before clustering (e.g. 50); 0 = disabled
+    l2_normalize: true         # Project all vectors onto the unit hypersphere before clustering
+    pre_umap_dims: 50            # >0 to UMAP-reduce to N dims before clustering (e.g. 50); 0 = disabled
     pre_umap_n_neighbors: 15
     pre_umap_metric: cosine
     pre_umap_random_state: 42
@@ -87,7 +87,7 @@ thumbnails:
 # ── MLLM Cluster Descriptions ────────────────────────────────
 mllm:
   base_url: "http://localhost:8001/v1"   # vLLM OpenAI-compatible server URL
-  model: "Qwen/Qwen2-VL-2B-Instruct"    # model name as passed to vLLM
+  model: "Qwen/Qwen3-VL-2B-Instruct"    # model name as passed to vLLM
   max_tokens: 60                         # max tokens per description
   timeout_s: 30.0                        # per-request timeout in seconds
   enabled: true                          # set false to disable without removing the section
