@@ -9,7 +9,7 @@ dependencies = [
     "torchvision>=0.17.0",
     # Detection & tracking
     "ultralytics>=8.1.0",
-    "boxmot>=10.0.0",
+    "boxmot>=10.0.0,<17.0.0",  # >=17 dropped direct BotSort/StrongSort class imports
     # Vector database
     "qdrant-client>=1.8.0",
     # Dimensionality reduction & clustering
@@ -30,6 +30,8 @@ dependencies = [
     "loguru>=0.7.2",
     # HTTP client (for health checks)
     "httpx>=0.27.0",
+    # OpenAI SDK (used to call vLLM's OpenAI-compatible API for MLLM descriptions)
+    "openai>=1.30.0",
     # VideoPrism dependencies (JAX-based)
     "einops>=0.7.0",
     "flax>=0.8.0",

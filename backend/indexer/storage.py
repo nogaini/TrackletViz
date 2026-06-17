@@ -579,11 +579,12 @@ class QdrantStorage:
             return None
         return results[0].payload
 
-    def get_global_cluster_stats_for_video(self, video_id: str) -> List[dict]:
+    def get_global_cluster_stats_for_video(self, video_id: str) -> dict:
         """
         Derive global cluster statistics by grouping clips by cluster_id.
 
-        Returns list of {cluster_id, member_count, representative_clip_ids}.
+        Returns {clusters: [{cluster_id, member_count, representative_clip_ids,
+        description?}], meta_summary?}.
         """
         clips = self.get_global_clips_for_video(
             video_id, include_flow=False, include_median=False
@@ -595,15 +596,20 @@ class QdrantStorage:
             cid = clip.get("cluster_id", -1)
             groups[cid].append(clip.get("clip_id", ""))
 
-        # representative_clip_ids are already stored in each clip payload
-        # (set during indexing); collect them per cluster
         rep_map: Dict[int, List[str]] = defaultdict(list)
         for clip in clips:
             cid = clip.get("cluster_id", -1)
             if clip.get("is_representative", False):
                 rep_map[cid].append(clip.get("clip_id", ""))
 
-        # Fallback: if reps weren't flagged, just use first few per cluster
+        # Fetch MLLM descriptions and meta-summary stored in video metadata
+        descriptions: Dict[str, str] = {}
+        meta_summary: Optional[str] = None
+        video_payload = self.get_video_metadata(video_id)
+        if video_payload:
+            descriptions = video_payload.get("global_cluster_descriptions") or {}
+            meta_summary = video_payload.get("global_cluster_meta_summary")
+
         stats = []
         for cid in sorted(groups.keys(), key=lambda c: (c < 0, c)):
             members = groups[cid]
@@ -613,9 +619,10 @@ class QdrantStorage:
                     "cluster_id": cid,
                     "member_count": len(members),
                     "representative_clip_ids": reps,
+                    "description": descriptions.get(str(cid)),
                 }
             )
-        return stats
+        return {"clusters": stats, "meta_summary": meta_summary}
 
     def video_tracklets_indexed(self, video_id: str) -> bool:
         """Return True if this video_id has a record in the videos collection."""
@@ -676,6 +683,14 @@ class QdrantStorage:
             collection_name=self.config.tracklets_collection,
             payload=fields,
             points=[_make_point_id(tracklet_id)],
+        )
+
+    def patch_video_metadata(self, video_id: str, fields: dict) -> None:
+        """Surgically update specific payload fields for the video metadata record."""
+        self.client.set_payload(
+            collection_name=self.config.videos_collection,
+            payload=fields,
+            points=[_make_point_id(video_id)],
         )
 
     def search_clips_by_text_embedding(

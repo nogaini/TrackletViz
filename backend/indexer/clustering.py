@@ -18,8 +18,48 @@ import umap as umap_lib
 import hdbscan as hdbscan_lib
 from loguru import logger
 
-from indexer.config import ClusteringConfig
+from indexer.config import ClusteringConfig, PreprocessConfig
 from models.schemas import ClusterStatistics, TrackletMetadata
+
+
+def preprocess_embeddings(
+    embeddings: Dict[str, np.ndarray],
+    cfg: PreprocessConfig,
+) -> Dict[str, np.ndarray]:
+    """L2-normalize and/or UMAP-reduce embeddings before clustering."""
+    if not cfg.l2_normalize and cfg.pre_umap_dims <= 0:
+        return embeddings
+
+    ids = list(embeddings.keys())
+    matrix = np.stack([embeddings[i] for i in ids])  # (N, D)
+
+    if cfg.l2_normalize:
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        matrix = matrix / np.maximum(norms, 1e-12)
+        logger.info("Preprocessing: L2-normalized embeddings")
+
+    if cfg.pre_umap_dims > 0:
+        n = len(matrix)
+        n_components = min(cfg.pre_umap_dims, n - 1)
+        n_neighbors = min(cfg.pre_umap_n_neighbors, n - 1)
+        if n_components < 2 or n <= n_components + 1:
+            logger.warning(
+                f"Skipping pre-UMAP reduction: {n} tracklets too few for "
+                f"{n_components}-component spectral layout (need > {n_components + 1})"
+            )
+        else:
+            reducer = umap_lib.UMAP(
+                n_components=n_components,
+                n_neighbors=n_neighbors,
+                metric=cfg.pre_umap_metric,
+                random_state=cfg.pre_umap_random_state,
+                min_dist=cfg.pre_umap_min_dist,
+                low_memory=True,
+            )
+            matrix = reducer.fit_transform(matrix).astype(np.float32)
+            logger.info(f"Preprocessing: UMAP reduced to {n_components} dims")
+
+    return {ids[i]: matrix[i] for i in range(len(ids))}
 
 
 class TrackletClusterer:
@@ -52,14 +92,17 @@ class TrackletClusterer:
         ids = list(embeddings.keys())
         matrix = np.stack([embeddings[tid] for tid in ids], axis=0)  # (N, D)
 
-        logger.info(f"Running UMAP on {len(ids)} embeddings (dim={matrix.shape[1]})")
+        n = len(ids)
+        logger.info(f"Running UMAP on {n} embeddings (dim={matrix.shape[1]})")
         u_cfg = self.config.umap
+        init = 'spectral' if n > u_cfg.n_components + 1 else 'random'
         reducer = umap_lib.UMAP(
-            n_neighbors=u_cfg.n_neighbors,
+            n_neighbors=min(u_cfg.n_neighbors, n - 1),
             min_dist=u_cfg.min_dist,
             metric=u_cfg.metric,
             n_components=u_cfg.n_components,
             random_state=u_cfg.random_state,
+            init=init,
         )
         coords_2d = reducer.fit_transform(matrix)  # (N, 2)
         self._umap_model = reducer

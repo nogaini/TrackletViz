@@ -15,7 +15,12 @@ router = APIRouter()
 
 @router.get("/global-clips/{video_id}/cluster-stats")
 def get_global_cluster_stats(video_id: str, request: Request):
-    """Return cluster statistics for all global clip clusters in a video."""
+    """
+    Return cluster statistics for all global clip clusters in a video.
+
+    Response shape: {clusters: [...], meta_summary?: string}
+    Each cluster object includes an optional MLLM-generated description field.
+    """
     return request.app.state.storage.get_global_cluster_stats_for_video(video_id)
 
 

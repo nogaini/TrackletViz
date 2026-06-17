@@ -7,8 +7,9 @@ Adapted from existing_code/detector.py:
   - Device selection respects config.processing.device
 """
 
+import subprocess
 from pathlib import Path
-from typing import Dict, Generator, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -61,7 +62,8 @@ class VideoProcessor:
         appearance-free tracking.
         """
         tracker_type = self.config.tracker.lower()
-        device = torch.device(self.config.device)
+        if self.config.device == "cuda":
+            device = 0
         half = self.config.device != "cpu"
 
         if tracker_type in _NO_REID_TRACKERS:
@@ -75,7 +77,7 @@ class VideoProcessor:
 
         # ReID-capable trackers: use a dummy weight path with ReID disabled
         # so we don't need to download the ReID model.
-        _DUMMY_REID = Path("osnet_x0_25_msmt17.pt")
+        _DUMMY_REID = Path("lmbn_n_duke.pt")
 
         if tracker_type == "botsort":
             from boxmot import BotSort
@@ -110,19 +112,66 @@ class VideoProcessor:
             half=half,
         )
 
+    def _build_pts_list(self, video_path: str) -> Optional[List[float]]:
+        """
+        Read actual per-frame presentation timestamps via ffprobe.
+
+        Returns a sorted (display-order) list of PTS values in seconds, one entry
+        per video frame, or None if ffprobe is unavailable or fails.  Sorting by
+        pts_time makes the result correct even for B-frame streams where packet
+        order differs from display order.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "quiet",
+                    "-select_streams", "v:0",
+                    "-show_packets",
+                    "-show_entries", "packet=pts_time",
+                    "-of", "csv=p=0",
+                    video_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=300,
+            )
+            pts: List[float] = []
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line and line != "N/A":
+                    try:
+                        pts.append(float(line))
+                    except ValueError:
+                        pass
+            if pts:
+                pts.sort()
+                logger.info(f"ffprobe: {len(pts)} frame PTS values, last={pts[-1]:.3f}s")
+                return pts
+        except Exception as exc:
+            logger.warning(f"ffprobe unavailable ({exc}) — falling back to frame_num/fps timestamps")
+        return None
+
     def process_video(
         self, video_path: str
-    ) -> Generator[Tuple[int, np.ndarray, object, np.ndarray], None, None]:
+    ) -> Generator[Tuple[int, np.ndarray, object, np.ndarray, float], None, None]:
         """
         Process video frame by frame with detection and tracking.
 
         Yields:
-            (frame_num, frame, yolo_results, tracks)
+            (frame_num, frame, yolo_results, tracks, pts_s)
             tracks shape: (N, 7+) — [x1, y1, x2, y2, track_id, conf, class_id, ...]
+            pts_s: actual presentation timestamp in seconds from container
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Failed to open video: {video_path}")
+
+        # Pre-read actual container PTS for every frame via ffprobe.  This is the
+        # only reliable source: cv2.CAP_PROP_POS_MSEC computes frame_count/r_fps
+        # (not actual PTS) and avg_fps diverges for VFR recordings.
+        fps_fallback = cap.get(cv2.CAP_PROP_FPS)
+        pts_list = self._build_pts_list(video_path)
 
         frame_num = 0
         try:
@@ -130,6 +179,12 @@ class VideoProcessor:
                 ret, frame = cap.read()
                 if not ret:
                     break
+
+                pts_s = (
+                    pts_list[frame_num]
+                    if pts_list and frame_num < len(pts_list)
+                    else frame_num / fps_fallback
+                )
 
                 results = self.model.predict(
                     frame,
@@ -146,7 +201,7 @@ class VideoProcessor:
                 else:
                     tracks = np.empty((0, 7))
 
-                yield frame_num, frame, results[0], tracks
+                yield frame_num, frame, results[0], tracks, pts_s
                 frame_num += 1
 
         finally:

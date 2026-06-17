@@ -18,36 +18,54 @@ import importlib
 import pathlib
 import sys
 
-# Pre-load the venv's CuDNN sub-libraries in topological dependency order using
-# absolute paths + RTLD_GLOBAL. glibc caches LD_LIBRARY_PATH at process startup,
-# so os.environ changes after startup have no effect on dlopen searches. Instead,
-# we force the correct venv libraries into the process's loaded-library table by
-# soname, so any subsequent dlopen("libcudnn_ops.so.9") etc. returns the venv
-# version rather than the older system version registered in ldconfig.
-def _preload_venv_cudnn() -> None:
+# Pre-load all CUDA sub-libraries from the venv's nvidia packages using absolute
+# paths + RTLD_GLOBAL. glibc caches LD_LIBRARY_PATH at process startup, so
+# os.environ changes after startup have no effect on dlopen searches. Forcing
+# the correct venv libraries into the process's loaded-library table ensures JAX's
+# CUDA plugin finds them when it calls cusparseGetProperty, cublasGetVersion, etc.
+def _preload_venv_cuda_libs() -> None:
     try:
-        _m = importlib.import_module("nvidia.cudnn")
-        _lib_dir = pathlib.Path(_m.__path__[0]) / "lib"
-        # Topological order: each entry's CuDNN DT_NEEDED deps are listed before it
-        _ordered = [
-            "libcudnn_graph.so.9",                    # no CuDNN deps
-            "libcudnn_ops.so.9",                      # needs: graph
-            "libcudnn_heuristic.so.9",                # needs: graph
-            "libcudnn_engines_precompiled.so.9",      # needs: graph
-            "libcudnn_engines_runtime_compiled.so.9", # needs: graph
-            "libcudnn_adv.so.9",                      # needs: ops, graph
-            "libcudnn_cnn.so.9",                      # needs: ops, graph
-        ]
-        for _lib in _ordered:
-            _p = _lib_dir / _lib
-            if _p.exists():
-                ctypes.CDLL(str(_p), mode=ctypes.RTLD_GLOBAL)
+        _nvidia_root = pathlib.Path(importlib.import_module("nvidia").__path__[0])
     except Exception:
-        pass  # Non-fatal: fall back to whatever the linker finds
+        return
+
+    # Load in dependency order: primitive libs first, then those that depend on them.
+    # nvJitLink is needed by cublas/cusparse/cusolver; CuDNN has its own sub-lib order.
+    _ordered_pkgs: list[tuple[str, list[str] | None]] = [
+        # (nvidia sub-package, [ordered .so filenames] or None to glob all *.so.*)
+        ("nvjitlink",  ["libnvJitLink.so.12"]),
+        ("cublas",     ["libcublasLt.so.12", "libcublas.so.12"]),
+        ("cusparse",   ["libcusparse.so.12"]),
+        ("cufft",      ["libcufft.so.11", "libcufftw.so.11"]),
+        ("cusolver",   ["libcusolver.so.11", "libcusolverMg.so.11"]),
+        ("cudnn",      [
+            "libcudnn_graph.so.9",
+            "libcudnn_ops.so.9",
+            "libcudnn_heuristic.so.9",
+            "libcudnn_engines_precompiled.so.9",
+            "libcudnn_engines_runtime_compiled.so.9",
+            "libcudnn_adv.so.9",
+            "libcudnn_cnn.so.9",
+        ]),
+    ]
+
+    for _pkg, _names in _ordered_pkgs:
+        _lib_dir = _nvidia_root / _pkg / "lib"
+        if not _lib_dir.is_dir():
+            continue
+        if _names is None:
+            _names = [p.name for p in sorted(_lib_dir.glob("*.so.*"))]
+        for _name in _names:
+            _p = _lib_dir / _name
+            if _p.exists():
+                try:
+                    ctypes.CDLL(str(_p), mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass  # Non-fatal
 
 
-_preload_venv_cudnn()
-del _preload_venv_cudnn
+_preload_venv_cuda_libs()
+del _preload_venv_cuda_libs
 
 from typing import TYPE_CHECKING, Dict, List, Tuple
 

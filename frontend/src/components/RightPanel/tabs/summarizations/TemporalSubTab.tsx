@@ -62,6 +62,15 @@ const PRESETS: [string, number][] = [
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function selectEvenly<T extends { clip_index: number }>(clips: T[], k: number): T[] {
+  if (clips.length === 0) return [];
+  if (clips.length <= k) return clips;
+  if (k === 1) return [clips[Math.floor(clips.length / 2)]];
+  return Array.from({ length: k }, (_, i) =>
+    clips[Math.round(i * (clips.length - 1) / (k - 1))],
+  );
+}
+
 function formatTime(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -193,9 +202,10 @@ export default function TemporalSubTab() {
     Array.from({ length: numBuckets }, (_, bi) => {
       const bStart = minTime + bi * bucketDuration;
       const bEnd = bStart + bucketDuration;
-      const overlapping = globalClips.filter(c => c.start_time < bEnd && c.end_time > bStart);
-      const reps = overlapping.filter(c => c.is_representative);
-      return { bStart, bEnd, clips: reps.slice(0, k) };
+      const overlapping = globalClips
+        .filter(c => c.start_time < bEnd && c.end_time > bStart)
+        .sort((a, b) => a.clip_index - b.clip_index);
+      return { bStart, bEnd, clips: selectEvenly(overlapping, k) };
     }),
   [globalClips, numBuckets, bucketDuration, minTime, k]);
 
@@ -442,7 +452,7 @@ export default function TemporalSubTab() {
         <div className="shrink-0 px-3 py-1 flex items-center justify-between border-b border-gray-800">
           <span className="text-xs font-medium text-gray-300">Keyframe Storyboard</span>
           <span className="text-[10px] text-gray-500">
-            FPS representatives · up to {k} per bucket
+            Keyframes · up to {k} per bucket
           </span>
         </div>
 

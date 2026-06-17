@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useStore } from '../../../stores/useStore';
 import { fetchGlobalClusterStats } from '../../../lib/api';
 import { getClusterColorHex } from '../../../lib/colors';
-import type { GlobalClipMetadata } from '../../../types/index';
+import type { GlobalClipMetadata, GlobalClusterStatistics } from '../../../types/index';
 
 // Loop modal for playing a clip segment
 interface LoopModalProps {
@@ -56,12 +56,15 @@ export default function GlobalClusterTab() {
 
   const [loopClip, setLoopClip] = useState<GlobalClipMetadata | null>(null);
 
-  const { data: clusterStats, isLoading } = useQuery({
+  const { data: statsResponse, isLoading } = useQuery({
     queryKey: ['global-cluster-stats', selectedVideoId],
     queryFn: () => fetchGlobalClusterStats(selectedVideoId!),
     enabled: !!selectedVideoId,
     staleTime: Infinity,
   });
+
+  const clusterStats: GlobalClusterStatistics[] = statsResponse?.clusters ?? [];
+  const metaSummary = statsResponse?.meta_summary;
 
   // Build clip map for fast lookup
   const clipMap = new Map(globalClips.map(c => [c.clip_id, c]));
@@ -101,7 +104,12 @@ export default function GlobalClusterTab() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-3 gap-3">
-      {(clusterStats ?? []).map(stat => {
+      {metaSummary && (
+        <div className="p-2 rounded bg-gray-800 border border-gray-700 text-xs text-gray-300 italic">
+          {metaSummary}
+        </div>
+      )}
+      {clusterStats.map(stat => {
         const borderColor = getClusterColorHex(stat.cluster_id);
         const label = stat.cluster_id < 0 ? 'Noise' : `Cluster ${stat.cluster_id}`;
 
@@ -164,6 +172,11 @@ export default function GlobalClusterTab() {
                   </span>
                 ))}
               </div>
+            )}
+
+            {/* MLLM description */}
+            {stat.description && (
+              <p className="text-[11px] text-gray-400 italic mb-2">{stat.description}</p>
             )}
 
             {/* Representative thumbnails */}

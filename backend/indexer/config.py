@@ -41,7 +41,18 @@ class HDBSCANConfig:
 
 
 @dataclass
+class PreprocessConfig:
+    l2_normalize: bool = False
+    pre_umap_dims: int = 0          # 0 = disabled; >0 = reduce to this many dims before clustering
+    pre_umap_n_neighbors: int = 15
+    pre_umap_metric: str = "cosine"
+    pre_umap_random_state: int = 42
+    pre_umap_min_dist: float = 0.0
+
+
+@dataclass
 class ClusteringConfig:
+    preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     umap: UMAPConfig = field(default_factory=UMAPConfig)
     hdbscan: HDBSCANConfig = field(default_factory=HDBSCANConfig)
     fps_representatives: int = 10
@@ -75,6 +86,15 @@ class QdrantConfig:
 
 
 @dataclass
+class MLLMConfig:
+    base_url: str = "http://localhost:8001/v1"
+    model: str = "Qwen/Qwen2-VL-2B-Instruct"
+    max_tokens: int = 60
+    timeout_s: float = 30.0
+    enabled: bool = True
+
+
+@dataclass
 class ThumbnailConfig:
     width: int = 128
     height: int = 128
@@ -93,6 +113,7 @@ class AppConfig:
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
     thumbnails: ThumbnailConfig = field(default_factory=ThumbnailConfig)
     global_clips: GlobalClipsConfig = field(default_factory=GlobalClipsConfig)
+    mllm: MLLMConfig = field(default_factory=MLLMConfig)
     cache_dir: str = ".indexer_cache"
 
 
@@ -133,7 +154,15 @@ def load_config(path: str) -> AppConfig:
     c = raw.get("clustering", {})
     u = c.get("umap", {})
     h = c.get("hdbscan", {})
+    pp = c.get("preprocess", {})
     clustering = ClusteringConfig(
+        preprocess=PreprocessConfig(
+            l2_normalize=pp.get("l2_normalize", False),
+            pre_umap_dims=pp.get("pre_umap_dims", 0),
+            pre_umap_n_neighbors=pp.get("pre_umap_n_neighbors", 15),
+            pre_umap_metric=pp.get("pre_umap_metric", "cosine"),
+            pre_umap_random_state=pp.get("pre_umap_random_state", 42),
+        ),
         umap=UMAPConfig(
             n_neighbors=u.get("n_neighbors", 15),
             min_dist=u.get("min_dist", 0.1),
@@ -195,6 +224,15 @@ def load_config(path: str) -> AppConfig:
         fps_representatives=gc.get("fps_representatives", 5),
     )
 
+    m = raw.get("mllm", {})
+    mllm_cfg = MLLMConfig(
+        base_url=m.get("base_url", "http://localhost:8001/v1"),
+        model=m.get("model", "Qwen/Qwen2-VL-2B-Instruct"),
+        max_tokens=m.get("max_tokens", 60),
+        timeout_s=m.get("timeout_s", 30.0),
+        enabled=m.get("enabled", True),
+    )
+
     cache_dir = raw.get("cache_dir", ".indexer_cache")
 
     return AppConfig(
@@ -204,5 +242,6 @@ def load_config(path: str) -> AppConfig:
         qdrant=qdrant,
         thumbnails=thumbnails,
         global_clips=global_clips_cfg,
+        mllm=mllm_cfg,
         cache_dir=cache_dir,
     )

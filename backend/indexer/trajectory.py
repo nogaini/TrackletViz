@@ -6,7 +6,7 @@ Adapted from existing_code/trajectory.py:
   - Added get_frame_range(track_id) for thumbnail / embedding extraction
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 import numpy as np
 from loguru import logger
@@ -33,7 +33,9 @@ class TrajectoryExtractor:
         self.trajectories: List[TrajectoryPoint] = []
         self.track_history: Dict[int, List[TrajectoryPoint]] = defaultdict(list)
 
-    def extract_from_tracks(self, frame_num: int, tracks: np.ndarray):
+    def extract_from_tracks(
+        self, frame_num: int, tracks: np.ndarray, timestamp_s: Optional[float] = None
+    ):
         """
         Convert one frame's BoxMOT tracks into TrajectoryPoint objects.
 
@@ -41,9 +43,14 @@ class TrajectoryExtractor:
             frame_num: Zero-based frame index.
             tracks: BoxMOT output array [x1, y1, x2, y2, track_id, conf, class_id, ...]
                     shape (N, 7+).
+            timestamp_s: Actual presentation timestamp in seconds. When provided,
+                         used directly instead of computing frame_num / fps (which
+                         can drift on videos where avg_fps ≠ r_frame_rate).
         """
         if len(tracks) == 0:
             return
+
+        ts = timestamp_s if timestamp_s is not None else frame_num / self.fps
 
         for track in tracks:
             x1, y1, x2, y2, track_id, conf, class_id = track[:7]
@@ -57,7 +64,7 @@ class TrajectoryExtractor:
                 track_id=int(track_id),
                 class_name=self.class_names.get(int(class_id), "unknown"),
                 frame_num=frame_num,
-                timestamp=frame_num / self.fps,
+                timestamp=ts,
                 center_x=float(center_x),
                 center_y=float(center_y),
                 bbox_w=float(bbox_w),

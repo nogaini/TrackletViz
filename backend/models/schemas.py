@@ -86,6 +86,7 @@ class ClusterStatistics(BaseModel):
     avg_speed: float
     class_distribution: Dict[str, float]        # {"person": 60.0, "car": 40.0}
     representative_tracklet_ids: List[str]
+    description: Optional[str] = None           # MLLM-generated one-sentence description
 
 
 # ── Video ──────────────────────────────────────────────────────────────────
@@ -105,6 +106,9 @@ class VideoMetadata(BaseModel):
     class_distribution: Dict[str, float] = {}   # percentages across all tracklets
     video_start_time: Optional[str] = None  # ISO format: "YYYY-MM-DDTHH:MM:SS"
     tag: Optional[str] = None               # human-readable label set at index time
+    cluster_meta_summary: Optional[str] = None          # MLLM meta-summary for local clusters
+    global_cluster_meta_summary: Optional[str] = None   # MLLM meta-summary for global clusters
+    global_cluster_descriptions: Optional[Dict[str, str]] = None  # {str(cluster_id): description}
 
 
 # ── Global Clips ────────────────────────────────────────────────────────────
@@ -133,3 +137,4 @@ class GlobalClusterStatistics(BaseModel):
     cluster_id: int
     member_count: int
     representative_clip_ids: List[str]   # FPS-selected clip IDs
+    description: Optional[str] = None   # MLLM-generated one-sentence description

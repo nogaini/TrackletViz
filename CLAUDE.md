@@ -141,7 +141,7 @@ Create a YAML configuration file with sections for:
 
 - **Processing**: YOLO model variant, tracker type, confidence threshold, target COCO classes, minimum tracklet frames (16)
 - **VideoPrism**: Model path, batch size, device
-- **Clustering**: UMAP parameters (n_neighbors, min_dist, metric, n_components=2), HDBSCAN parameters (min_cluster_size=5, min_samples), FPS representatives count (5)
+- **Clustering**: Optional preprocessing (l2_normalize, pre_umap_dims), UMAP parameters (n_neighbors, min_dist, metric, n_components=2), HDBSCAN parameters (min_cluster_size=5, min_samples), FPS representatives count (5)
 - **Qdrant**: Host, port, collection name, embedding dimension
 - **Thumbnails**: Dimensions, format, quality
 
@@ -202,8 +202,12 @@ Define Pydantic models for:
 
 **New module:**
 
-- Apply UMAP to reduce high-dimensional embeddings to 2D coordinates for visualization
-- Apply HDBSCAN clustering on the original high-dimensional embeddings (not the UMAP output)
+- Optionally preprocess embeddings before clustering (controlled by `clustering.preprocess` config):
+  - L2-normalize: project all vectors onto the unit hypersphere
+  - UMAP pre-reduction: reduce to an intermediate dimensionality (e.g. 50 dims) before clustering to densify the manifold; uses a separate UMAP model from the 2D visualization one
+  - Preprocessed embeddings are used for both HDBSCAN clustering and FPS representative selection; raw embeddings are always stored in Qdrant for similarity search
+- Apply UMAP to reduce (preprocessed) embeddings to 2D coordinates for visualization
+- Apply HDBSCAN clustering on the (preprocessed) embeddings (not the 2D UMAP output)
 - HDBSCAN will label noise points as -1; keep these points (do not discard)
 - For each cluster (including noise), select representative tracklets using Farthest Point Sampling (FPS):
   - Start with an arbitrary point
@@ -243,7 +247,8 @@ Define Pydantic models for:
 4. Filter tracklets to keep only those with >= minimum frames
 5. Calculate speeds for all tracklet points
 6. Extract VideoPrism embeddings for each tracklet
-7. Run UMAP dimensionality reduction and HDBSCAN clustering
+6.5. Optionally preprocess embeddings (L2-normalize and/or UMAP pre-reduce) per `clustering.preprocess` config
+7. Run UMAP dimensionality reduction and HDBSCAN clustering (on preprocessed embeddings)
 8. Compute cluster statistics and select representative tracklets via FPS
 9. Generate thumbnails for all tracklets and background image
 10. Build metadata objects for all tracklets and the video
@@ -438,6 +443,7 @@ Container component with tab navigation for the five panels described below.
 
 **Display:**
 
+- If `VideoMetadata.cluster_meta_summary` is present, show a meta-summary banner at the top of the tab (italic text in a subtle gray box) explaining what the clusters collectively distinguish
 - Show each cluster as a card
 - Card border/accent color matches the cluster color in the embeddings panel
 - Card contents:
@@ -445,6 +451,7 @@ Container component with tab navigation for the five panels described below.
   - Member count
   - Average speed of tracklets in cluster
   - Object class distribution as percentages
+  - MLLM description (`ClusterStatistics.description`) in italic below class badges, if present
   - Thumbnails of representative tracklets (from representative_tracklet_ids)
 
 **Interactions:**

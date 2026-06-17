@@ -4,7 +4,7 @@ import type {
   TrackletMetadata,
   SearchResult,
   GlobalClipMetadata,
-  GlobalClusterStatistics,
+  GlobalClusterStatsResponse,
   ClipSearchResult,
 } from '../types/index';
 
@@ -89,10 +89,10 @@ export const fetchGlobalClipDetail = (clipId: string): Promise<GlobalClipMetadat
 
 export const fetchGlobalClusterStats = (
   videoId: string,
-): Promise<GlobalClusterStatistics[]> =>
+): Promise<GlobalClusterStatsResponse> =>
   fetch(`/api/global-clips/${videoId}/cluster-stats`).then(
     r => r.json(),
-  ) as Promise<GlobalClusterStatistics[]>;
+  ) as Promise<GlobalClusterStatsResponse>;
 
 export const searchClips = (
   video_id: string,

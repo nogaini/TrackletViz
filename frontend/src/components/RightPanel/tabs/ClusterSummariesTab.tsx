@@ -187,6 +187,7 @@ export default function ClusterSummariesTab({
   );
 
   const clusterStats = videoMetadata?.cluster_stats ?? [];
+  const metaSummary = videoMetadata?.cluster_meta_summary;
 
   if (clusterStats.length === 0) {
     return (
@@ -199,6 +200,11 @@ export default function ClusterSummariesTab({
   return (
     <>
       <div className="h-full overflow-y-auto p-3 space-y-3">
+        {metaSummary && (
+          <div className="p-2 rounded bg-gray-800 border border-gray-700 text-xs text-gray-300 italic">
+            {metaSummary}
+          </div>
+        )}
         {clusterStats.map((cluster) => {
           const repTracklets = cluster.representative_tracklet_ids
             .map((id) => tracklets.find((t) => t.tracklet_id === id))
@@ -247,6 +253,11 @@ export default function ClusterSummariesTab({
                   ),
                 )}
               </div>
+
+              {/* MLLM description */}
+              {cluster.description && (
+                <p className="text-[11px] text-gray-400 italic mb-2">{cluster.description}</p>
+              )}
 
               {/* Representative thumbnails */}
               {repTracklets.length > 0 && (

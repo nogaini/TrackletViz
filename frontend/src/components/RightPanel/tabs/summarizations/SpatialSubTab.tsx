@@ -402,7 +402,8 @@ export default function SpatialSubTab() {
           </p>
         </div>
       ) : (
-        <div className={`flex-1 overflow-y-auto p-2 grid ${cols} gap-2 content-start`}>
+        <div className="flex-1 overflow-y-auto">
+        <div className={`p-2 grid ${cols} gap-2`}>
           {Array.from({ length: displayN }, (_, bi) => {
             const tStart = minTime + bi * displayBucketDur;
             const tEnd = tStart + displayBucketDur;
@@ -428,6 +429,7 @@ export default function SpatialSubTab() {
               </div>
             );
           })}
+        </div>
         </div>
       )}
 

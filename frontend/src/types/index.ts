@@ -37,6 +37,7 @@ export interface ClusterStatistics {
   avg_speed: number;
   class_distribution: Record<string, number>;
   representative_tracklet_ids: string[];
+  description?: string;
 }
 
 export interface VideoMetadata {
@@ -52,6 +53,8 @@ export interface VideoMetadata {
   total_tracklets: number;
   class_distribution: Record<string, number>;
   tag?: string;
+  cluster_meta_summary?: string;
+  global_cluster_meta_summary?: string;
 }
 
 export interface VideoSummary {
@@ -89,6 +92,12 @@ export interface GlobalClusterStatistics {
   cluster_id: number;
   member_count: number;
   representative_clip_ids: string[];
+  description?: string;
+}
+
+export interface GlobalClusterStatsResponse {
+  clusters: GlobalClusterStatistics[];
+  meta_summary?: string;
 }
 
 export interface ClipSearchResult {

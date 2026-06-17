@@ -26,15 +26,19 @@ The offline indexing pipeline is the computational backbone of TrackletViz. It i
 
 **Embedding Extraction.** Each surviving tracklet is encoded into a 768-dimensional vector using a video foundation model (VideoPrism LvT). For each tracklet, 16 frames are sampled evenly across its temporal span; if the tracklet contains fewer than 16 frames, the last frame is repeated to pad the sequence. The crop region for each frame is the tracklet's bounding box at that moment, padded by a fixed margin and resized to a standard spatial resolution. These cropped frame sequences are passed through the model in batches, and the resulting embeddings capture rich semantic and appearance information about the tracked object.
 
-**Dimensionality Reduction and Clustering.** The full collection of 768-dimensional embeddings is processed in two ways simultaneously:
+**Embedding Preprocessing (optional).** Before clustering, the 768-dimensional embeddings can be optionally preprocessed in two configurable steps. First, *L2 normalization* projects each vector onto the unit hypersphere, making cosine similarity equivalent to dot-product distance and stabilizing density-based clustering. Second, a preliminary *UMAP reduction* compresses the embeddings from 768 dimensions to a smaller intermediate space (e.g. 50 dimensions), densifying the manifold and reducing the computational cost of HDBSCAN without discarding semantic structure. Both steps are disabled by default and controlled via the `clustering.preprocess` section of the configuration. Preprocessed embeddings are checkpointed separately from the raw embeddings; raw embeddings are always stored in Qdrant for similarity search.
+
+**Dimensionality Reduction and Clustering.** The (optionally preprocessed) embeddings are then processed in two ways simultaneously:
 
 - *UMAP* reduces the embeddings to two dimensions for visualization. This projection is computed globally so that relative distances in the scatter plot reflect semantic similarity. Configuration parameters (neighborhood count, minimum distance, distance metric) control the trade-off between local detail preservation and global structure.
 
-- *HDBSCAN* density-based clustering is applied to the original high-dimensional embeddings (not the UMAP projections) to assign each tracklet a cluster label. Points that do not belong to any dense cluster receive a noise label (−1). Clustering in the original high-dimensional space avoids artifacts introduced by dimensionality reduction and yields semantically coherent groups.
+- *HDBSCAN* density-based clustering is applied to the preprocessed embeddings (or the original high-dimensional embeddings if no preprocessing is configured) to assign each tracklet a cluster label. Points that do not belong to any dense cluster receive a noise label (−1). Clustering before the final 2D projection avoids artifacts introduced by that reduction and yields semantically coherent groups.
 
 **Representative Selection via Farthest Point Sampling.** For each cluster, the system selects a small set of representative tracklets using Farthest Point Sampling (FPS). Starting from an arbitrary point, FPS greedily adds the point that maximizes the minimum distance to all already-selected points. This deterministic algorithm ensures diversity: the representatives span the within-cluster semantic variation rather than clustering near the centroid.
 
 **Thumbnail Generation and Metadata Assembly.** A 128×128 JPEG thumbnail is generated for each tracklet by cropping the video frame at the tracklet's temporal midpoint to the bounding box region. The video's background frame is computed as the per-pixel temporal median across a set of sampled frames, serving as a static reference for spatial overlays. Per-tracklet and per-cluster metadata is assembled into structured records and written to the vector database alongside the raw embeddings.
+
+**MLLM Cluster Descriptions (Local).** If a vLLM server is reachable at index time, the system sends up to five representative tracklet thumbnails per cluster — selected by Farthest Point Sampling — together with aggregate statistics (member count, class distribution, average speed) to a locally hosted multimodal language model (e.g., Qwen2-VL-2B). The model returns a one-sentence natural-language description per cluster (e.g., "Mostly cyclists moving quickly along the upper lane"). After all per-cluster descriptions are collected, a second text-only prompt asks the model to synthesize a meta-summary explaining what the clusters collectively distinguish from each other (e.g., "Clusters 0–2 capture slow pedestrian foot traffic while clusters 3–4 represent faster vehicles"). Both the per-cluster descriptions and the meta-summary are stored in the video metadata record before it is written to the database. This step is skipped silently if vLLM is unavailable or `mllm.enabled` is false, leaving existing data and UI behaviour unchanged.
 
 #### 1.2.2 Global Phase: Scene-Level Clip Analysis
 
@@ -52,13 +56,15 @@ The offline indexing pipeline is the computational backbone of TrackletViz. It i
 
 **Tracklet–Clip Association.** Each clip is linked to all tracklets whose temporal span overlaps with the clip's time interval. This cross-index enables the interface to highlight relevant tracklets when a clip is selected.
 
+**MLLM Cluster Descriptions (Global).** Following the same pattern as the local phase, per-cluster descriptions and a meta-summary are generated for the global clip clusters. The image inputs are the full-scene `thumbnail_base64` frames of the FPS-selected representative clips (320×height JPEG, middle frame of each clip), which provide broader scene context than the cropped tracklet thumbnails used in the local phase. Derived statistics (clip member count, class distribution, average speed across overlapping tracklets) accompany the images in the prompt. Descriptions and meta-summary are stored in the video metadata payload via a surgical `set_payload` update rather than a full re-upsert, so this step can be applied independently of clip storage.
+
 #### 1.2.3 Storage Schema
 
 All derived data is stored in a vector database organized into three collections:
 
 - **Tracklets**: Each record stores the 768-dimensional embedding as its searchable vector and carries a rich payload including cluster assignment, 2D UMAP coordinates, bounding box sequence, speed statistics, thumbnail, and class label. Payload indices on video ID, cluster ID, and class name enable efficient server-side filtering without scanning the full collection.
 
-- **Videos**: Each record stores the full video-level metadata — frame dimensions, duration, background image, cluster statistics, class distribution — without a searchable vector. This collection acts as a key-value store for session initialization.
+- **Videos**: Each record stores the full video-level metadata — frame dimensions, duration, background image, cluster statistics (each with an optional MLLM description), class distribution, and optional MLLM meta-summaries for both local and global clusters — without a searchable vector. This collection acts as a key-value store for session initialization.
 
 - **Global Clips**: Each record stores the clip's 768-dimensional embedding alongside clip-level metadata, thumbnail, median frame, and encoded optical flow. Payload indices on video ID and cluster ID support filtering.
 
@@ -80,6 +86,7 @@ A lightweight REST API serves all retrieval operations to the frontend. Key endp
 - **Batch tracklet fetch**: Retrieves full bounding-box data for a specified set of tracklet IDs on demand.
 - **Text search (tracklets)**: Accepts a natural-language query, encodes it to a 768-dimensional text embedding using the foundation model's text encoder, and returns the top-K most similar tracklets within a specified video using cosine similarity.
 - **Global clip retrieval and search**: Mirrors the tracklet endpoints for the clip collection, with optional inclusion of heavy fields (median frames, optical flow).
+- **Global cluster statistics**: Returns `{clusters: [{cluster_id, member_count, representative_clip_ids, description?}], meta_summary?}`. Per-cluster descriptions and the video-level meta-summary are merged in from the video metadata payload and included when present.
 - **Video streaming**: Range-aware HTTP byte-serving of the original video file, enabling seeking in the browser video player.
 
 ---
@@ -174,10 +181,11 @@ Filters are applied client-side and take effect immediately without additional n
 
 #### 2.2.6 Tab 4 — Cluster Summaries
 
-The Cluster Summaries tab lists all HDBSCAN clusters identified in the video, including the noise cluster. Each cluster is displayed as a card with:
+The Cluster Summaries tab lists all HDBSCAN clusters identified in the video, including the noise cluster. If MLLM descriptions were generated at index time, a meta-summary banner is displayed at the top of the tab, providing a single synthesized explanation of what the clusters collectively distinguish (e.g., "Clusters 0–2 capture slow pedestrian foot traffic while clusters 3–4 represent faster vehicles"). Each cluster is displayed as a card with:
 
 - A left border accent colored with the cluster's color.
 - Aggregate statistics: member count, average speed of member tracklets, class distribution as percentages.
+- An optional MLLM-generated one-sentence description of the cluster's dominant activity or object type, rendered in italic below the class distribution badges.
 - Thumbnail images of the cluster's FPS-selected representative tracklets.
 
 Hovering over a cluster card triggers cross-panel highlighting: all points in the corresponding cluster in the scatter plot are raised in prominence while others are dimmed. Hovering over a representative thumbnail highlights that specific point in the scatter plot. Clicking any representative thumbnail opens a modal dialog with a video player looping that tracklet with bounding-box overlay.
@@ -214,7 +222,7 @@ All sub-tab analyses are computed client-side by decoding the pre-stored auxilia
 
 #### 2.3.4 Global Cluster Summaries
 
-The Global Cluster Summaries tab lists clusters from the clip-level HDBSCAN assignment. Cards display clip count, aggregate statistics, and representative clip thumbnails. Hover interactions mirror the Local View: hovering a cluster highlights it in the scatter plot; hovering a clip thumbnail highlights that specific point. Clicking a representative thumbnail opens a clip loop modal.
+The Global Cluster Summaries tab lists clusters from the clip-level HDBSCAN assignment. If MLLM descriptions were generated at index time, a meta-summary banner is shown at the top of the tab. Each card displays clip count, aggregate statistics, an optional MLLM description (italic, below class distribution badges), and representative clip thumbnails derived from the FPS-selected clips' middle frames. Hover interactions mirror the Local View: hovering a cluster highlights it in the scatter plot; hovering a clip thumbnail highlights that specific point. Clicking a representative thumbnail opens a clip loop modal.
 
 #### 2.3.5 Global Text Search
 

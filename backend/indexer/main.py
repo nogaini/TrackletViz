@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import torch._dynamo  # noqa: F401  (must import before umap/numba — see comment below)
 from loguru import logger
 
 # Ensure the backend package root is on sys.path regardless of CWD
@@ -27,22 +28,28 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
+# torch's triton backend and umap's numba backend each bundle their own LLVM;
+# loading numba/llvmlite's LLVM symbols first causes a segfault once torch
+# later triggers triton's LLVM init in the same process. Importing torch._dynamo
+# here forces triton's init to happen before indexer.clustering pulls in umap.
 from indexer.checkpoint import CheckpointManager
 from indexer.clustering import TrackletClusterer
 from indexer.config import ClusteringConfig, load_config
 from indexer.detector import VideoProcessor
 from indexer.embeddings import TrackletEmbedder
 from indexer.global_clips import GlobalClipProcessor
+from indexer.mllm import MLLMClient
 from indexer.speed import SpeedEstimator
 from indexer.storage import QdrantStorage
 from indexer.thumbnails import ThumbnailGenerator
 from indexer.trajectory import TrajectoryExtractor
-from models.schemas import BoundingBox, GlobalClipMetadata, TrackletMetadata, VideoMetadata
+from models.schemas import BoundingBox, GlobalClipMetadata, TrackletMetadata, TrajectoryPoint, VideoMetadata
 
 
 _RECOMPUTE_OPTIONS = [
     "optical-flow", "median-frames", "clip-thumbnails",
     "tracklet-thumbnails", "local-embeddings", "global-embeddings",
+    "local-clustering", "global-clustering", "fix-timestamps",
 ]
 
 
@@ -141,6 +148,7 @@ def run_pipeline(
     start_time: Optional[str] = None,
     tag: Optional[str] = None,
     force: bool = False,
+    _skip_qdrant_precheck: bool = False,
 ):
     logger.info("=" * 60)
     logger.info(f"TrackletViz Indexing Pipeline")
@@ -176,7 +184,9 @@ def run_pipeline(
     # ── Qdrant pre-check: sync checkpoint flags from existing indexed data ─
     # Runs even if no local checkpoint files exist (e.g. different machine,
     # cache cleared) so that already-indexed videos are never recomputed.
-    if not force:
+    # Skipped when called from run_recompute — intentional checkpoint deletions
+    # must not be restored by the pre-check.
+    if not force and not _skip_qdrant_precheck:
         try:
             _storage_probe = QdrantStorage(config.qdrant)
             _storage_probe.setup_collections()
@@ -242,6 +252,7 @@ def run_pipeline(
 
     # ── Steps 3-13: Tracking, embedding, clustering, storing tracklets ─────
 
+    mllm_client: Optional[MLLMClient] = None
     if cm.is_done("tracklets_indexed"):
         logger.info("[3-13/21] Tracklets already indexed — loading from checkpoint")
         td2 = cm.load("tracklet_metadata")
@@ -286,8 +297,8 @@ def run_pipeline(
             logger.info("[4/21] Running detection and tracking")
             extractor = TrajectoryExtractor(fps=fps, class_names=processor.class_names)
 
-            for frame_num, frame, _yolo_results, tracks in processor.process_video(video_path):
-                extractor.extract_from_tracks(frame_num, tracks)
+            for frame_num, frame, _yolo_results, tracks, pts_s in processor.process_video(video_path):
+                extractor.extract_from_tracks(frame_num, tracks, pts_s)
                 if frame_num % 100 == 0:
                     logger.info(f"  Processed frame {frame_num} …")
 
@@ -369,10 +380,23 @@ def run_pipeline(
 
         # ── Steps 9-13: Cluster, thumbnails, build metadata, store ────────
 
+        # ── Step 8.5: Preprocess embeddings ───────────────────────────────
+        if cm.has("preprocessed_embeddings"):
+            logger.info("[8.5/21] Loaded preprocessed embeddings checkpoint")
+            cluster_embeddings = cm.load("preprocessed_embeddings")
+        else:
+            logger.info("[8.5/21] Preprocessing embeddings")
+            from indexer.clustering import preprocess_embeddings
+            cluster_embeddings = preprocess_embeddings(embeddings, config.clustering.preprocess)
+            if cluster_embeddings is not embeddings:
+                cm.save("preprocessed_embeddings", cluster_embeddings)
+            else:
+                logger.info("[8.5/21] No preprocessing configured, skipping")
+
         # ── Step 9: UMAP + HDBSCAN clustering ─────────────────────────────
         logger.info("[9/21] Running UMAP + HDBSCAN clustering")
         clusterer = TrackletClusterer(config.clustering)
-        umap_coords, cluster_labels = clusterer.fit(embeddings)
+        umap_coords, cluster_labels = clusterer.fit(cluster_embeddings)
 
         # ── Step 10: Thumbnails ────────────────────────────────────────────
         logger.info("[10/21] Generating thumbnails")
@@ -415,7 +439,7 @@ def run_pipeline(
 
         # ── Step 12: Cluster statistics ────────────────────────────────────
         logger.info("[12/21] Computing cluster statistics")
-        cluster_stats = clusterer.compute_cluster_stats(tracklets, cluster_labels, embeddings)
+        cluster_stats = clusterer.compute_cluster_stats(tracklets, cluster_labels, cluster_embeddings)
 
         class_counts: Dict[str, int] = defaultdict(int)
         for t in tracklets:
@@ -424,6 +448,43 @@ def run_pipeline(
         class_dist = {
             cls: round(cnt / total_t * 100.0, 1) for cls, cnt in class_counts.items()
         }
+
+        # ── (MLLM) Local cluster descriptions ─────────────────────────────
+        local_meta_summary: Optional[str] = None
+        if config.mllm.enabled:
+            mllm_client = MLLMClient(config.mllm)
+            if mllm_client.is_available():
+                logger.info("  [MLLM] Generating descriptions for local clusters")
+                n_described = 0
+                for stat in cluster_stats:
+                    images = [
+                        thumbnails[tid]
+                        for tid in stat.representative_tracklet_ids[:5]
+                        if thumbnails.get(tid)
+                    ]
+                    if images:
+                        stat.description = mllm_client.describe_cluster(images, {
+                            "member_count": stat.member_count,
+                            "class_dist": stat.class_distribution,
+                            "avg_speed": stat.avg_speed,
+                        })
+                        if stat.description:
+                            n_described += 1
+                logger.info(
+                    f"  [MLLM] Local descriptions: {n_described}/{len(cluster_stats)} clusters"
+                )
+                descriptions_for_local_meta = [
+                    f"{'Noise' if s.cluster_id < 0 else f'Cluster {s.cluster_id}'}: {s.description}"
+                    for s in cluster_stats if s.description
+                ]
+                if len(descriptions_for_local_meta) >= 2:
+                    local_meta_summary = mllm_client.generate_meta_summary(
+                        descriptions_for_local_meta, len(cluster_stats)
+                    )
+                    if local_meta_summary:
+                        logger.info(f"  [MLLM] Local meta-summary: {local_meta_summary[:80]}…")
+            else:
+                logger.info("  [MLLM] vLLM not reachable — skipping local cluster descriptions")
 
         video_meta = VideoMetadata(
             video_id=video_id,
@@ -439,6 +500,7 @@ def run_pipeline(
             class_distribution=class_dist,
             video_start_time=video_start_dt.strftime("%Y-%m-%dT%H:%M:%S") if video_start_dt else None,
             tag=tag,
+            cluster_meta_summary=local_meta_summary,
         )
 
         # ── Step 13: Store in Qdrant ───────────────────────────────────────
@@ -627,6 +689,73 @@ def run_pipeline(
         finally:
             cap_feat.release()
 
+        # ── (MLLM) Global cluster descriptions ────────────────────────────
+        if config.mllm.enabled:
+            _gc_mllm = mllm_client if mllm_client is not None else MLLMClient(config.mllm)
+            if _gc_mllm.is_available():
+                logger.info("  [MLLM] Generating descriptions for global clusters")
+                _tracklet_map = {t.tracklet_id: t for t in tracklets}
+
+                # Group clips by cluster_id; collect rep clip thumbnails per cluster
+                _cluster_clips: Dict[int, List[GlobalClipMetadata]] = defaultdict(list)
+                _cluster_rep_clips: Dict[int, List[GlobalClipMetadata]] = defaultdict(list)
+                for _clip in global_clips_meta:
+                    _cluster_clips[_clip.cluster_id].append(_clip)
+                    if _clip.is_representative:
+                        _cluster_rep_clips[_clip.cluster_id].append(_clip)
+
+                _gc_descriptions: Dict[str, str] = {}
+                _gc_desc_list: List[str] = []
+                for _cid, _rep_clips in _cluster_rep_clips.items():
+                    _images = [c.thumbnail_base64 for c in _rep_clips if c.thumbnail_base64]
+                    if not _images:
+                        continue
+                    # Derive stats from tracklets overlapping this cluster's clips
+                    _tids: set = set()
+                    for _c in _cluster_clips[_cid]:
+                        _tids.update(_c.tracklet_ids)
+                    _ctracks = [_tracklet_map[tid] for tid in _tids if tid in _tracklet_map]
+                    _avg_spd = (
+                        sum(t.avg_speed for t in _ctracks) / len(_ctracks)
+                        if _ctracks else 0.0
+                    )
+                    _cls_counts: Dict[str, int] = defaultdict(int)
+                    for _t in _ctracks:
+                        _cls_counts[_t.class_name] += 1
+                    _total_t = max(sum(_cls_counts.values()), 1)
+                    _cls_dist = {k: v / _total_t * 100 for k, v in _cls_counts.items()}
+
+                    _desc = _gc_mllm.describe_cluster(_images[:5], {
+                        "member_count": len(_cluster_clips[_cid]),
+                        "class_dist": _cls_dist,
+                        "avg_speed": _avg_spd,
+                    })
+                    if _desc:
+                        _gc_descriptions[str(_cid)] = _desc
+                        _label = "Noise" if _cid < 0 else f"Cluster {_cid}"
+                        _gc_desc_list.append(f"{_label}: {_desc}")
+
+                logger.info(
+                    f"  [MLLM] Global descriptions: "
+                    f"{len(_gc_descriptions)}/{len(_cluster_rep_clips)} clusters"
+                )
+
+                _gc_meta_summary: Optional[str] = None
+                if len(_gc_desc_list) >= 2:
+                    _gc_meta_summary = _gc_mllm.generate_meta_summary(
+                        _gc_desc_list, len(_cluster_rep_clips)
+                    )
+                    if _gc_meta_summary:
+                        logger.info(f"  [MLLM] Global meta-summary: {_gc_meta_summary[:80]}…")
+
+                if _gc_descriptions or _gc_meta_summary:
+                    storage.patch_video_metadata(video_id, {
+                        "global_cluster_descriptions": _gc_descriptions or None,
+                        "global_cluster_meta_summary": _gc_meta_summary,
+                    })
+            else:
+                logger.info("  [MLLM] vLLM not reachable — skipping global cluster descriptions")
+
         # ── Step 21: Store global clips in Qdrant ─────────────────────────
         logger.info("[21/21] Storing global clips in Qdrant")
         storage.upsert_global_clips(video_id, global_clips_meta, clip_embeddings)
@@ -649,6 +778,95 @@ def run_pipeline(
     logger.success("=" * 60)
 
 
+# ── Helpers for selective recomputation ───────────────────────────────────
+
+def _reconstruct_tracking_from_qdrant(
+    cm: "CheckpointManager",
+    video_id: str,
+    storage: "QdrantStorage",
+) -> bool:
+    """
+    Rebuild tracking.pkl from Qdrant when the checkpoint file is missing.
+
+    Returns True on success, False if the video is not found in Qdrant.
+    """
+    import base64
+
+    vm = storage.get_video_metadata(video_id)
+    if vm is None:
+        return False
+
+    fps = float(vm["fps"])
+    meta_raw = {
+        "fps": fps,
+        "width": vm["width"],
+        "height": vm["height"],
+        "duration": vm["duration"],
+        "total_frames": vm["total_frames"],
+    }
+
+    # Decode stored background image back to a numpy array
+    background_frame = None
+    bg_b64 = vm.get("background_image_base64")
+    if bg_b64:
+        img_bytes = base64.b64decode(bg_b64)
+        background_frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+
+    raw_tracklets = storage.get_tracklets_for_video(video_id, include_bboxes=True)
+    prefix = f"{video_id}_"
+
+    valid_track_ids: List[int] = []
+    tracklet_infos: List[dict] = []
+    speeds: Dict[int, List[float]] = {}
+    trajectories: Dict[int, list] = {}
+    class_name_to_id: Dict[str, int] = {}
+
+    for t in raw_tracklets:
+        tid_str: str = t["tracklet_id"]
+        track_id = int(tid_str[len(prefix):])
+        class_name: str = t["class_name"]
+        class_id: int = t.get("class_id", -1)
+        bboxes: List[dict] = t.get("bounding_boxes", [])
+
+        valid_track_ids.append(track_id)
+        class_name_to_id[class_name] = class_id
+
+        pts = [
+            TrajectoryPoint(
+                track_id=track_id,
+                class_name=class_name,
+                frame_num=bb["frame_num"],
+                timestamp=bb["timestamp"],
+                center_x=bb["center_x"],
+                center_y=bb["center_y"],
+                bbox_w=bb["width"],
+                bbox_h=bb["height"],
+                speed=bb.get("speed"),
+            )
+            for bb in bboxes
+        ]
+        trajectories[track_id] = pts
+        speeds[track_id] = [float(bb.get("speed") or 0.0) for bb in bboxes]
+        tracklet_infos.append({
+            "tracklet_id": tid_str,
+            "frame_nums": [bb["frame_num"] for bb in bboxes],
+            "bboxes": [(bb["x1"], bb["y1"], bb["x2"], bb["y2"]) for bb in bboxes],
+        })
+
+    cm.save("tracking", {
+        "tracklet_infos":   tracklet_infos,
+        "valid_track_ids":  valid_track_ids,
+        "speeds":           speeds,
+        "trajectories":     trajectories,
+        "meta_raw":         meta_raw,
+        "fps":              fps,
+        "background_frame": background_frame,
+        "class_name_to_id": class_name_to_id,
+    })
+    logger.info(f"  Reconstructed tracking checkpoint: {len(valid_track_ids)} tracklets from Qdrant")
+    return True
+
+
 # ── Selective recomputation ────────────────────────────────────────────────
 
 def run_recompute(video_path: str, config_path: str, components: List[str]) -> None:
@@ -667,16 +885,18 @@ def run_recompute(video_path: str, config_path: str, components: List[str]) -> N
     # ── Determine which components are surgical vs. pipeline-reset ──────────
     _PIPELINE_RESET = {
         "local-embeddings":  ["embeddings", "tracklets_indexed"],
+        "local-clustering":  ["tracklet_metadata", "tracklets_indexed"],
         "global-embeddings": ["clip_embeddings", "clips_indexed"],
+        "global-clustering": ["clips_indexed"],
     }
     pipeline_comps = [c for c in components if c in _PIPELINE_RESET]
     surgical_comps = [c for c in components if c not in _PIPELINE_RESET]
 
     # Suppress redundant surgical work if the pipeline will redo it anyway
-    if "global-embeddings" in pipeline_comps:
+    if "global-embeddings" in pipeline_comps or "global-clustering" in pipeline_comps:
         surgical_comps = [c for c in surgical_comps
                           if c not in {"optical-flow", "median-frames", "clip-thumbnails"}]
-    if "local-embeddings" in pipeline_comps:
+    if "local-embeddings" in pipeline_comps or "local-clustering" in pipeline_comps:
         surgical_comps = [c for c in surgical_comps if c != "tracklet-thumbnails"]
 
     # ── Surgical updates ────────────────────────────────────────────────────
@@ -775,14 +995,85 @@ def run_recompute(video_path: str, config_path: str, components: List[str]) -> N
                 storage.patch_tracklet(tid, {"thumbnail_base64": thumb_b64})
             logger.info(f"  Updated thumbnails for {len(thumbnails)} tracklets")
 
+    # ── fix-timestamps ──────────────────────────────────────────────────────
+    if "fix-timestamps" in surgical_comps:
+        if not cm.has("tracking"):
+            logger.error("tracking.pkl not found — re-run the full pipeline first")
+        else:
+            logger.info("  [fix-timestamps] Reading actual frame PTS via ffprobe …")
+            import subprocess as _sp
+            try:
+                _ff_result = _sp.run(
+                    [
+                        "ffprobe", "-v", "quiet",
+                        "-select_streams", "v:0",
+                        "-show_packets",
+                        "-show_entries", "packet=pts_time",
+                        "-of", "csv=p=0",
+                        video_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=300,
+                )
+            except Exception as _exc:
+                logger.error(
+                    f"  ffprobe failed: {_exc} — cannot fix timestamps without actual PTS"
+                )
+            else:
+                _pts_list: List[float] = sorted(
+                    float(_ln)
+                    for _ln in _ff_result.stdout.splitlines()
+                    if _ln.strip() and _ln.strip() != "N/A"
+                )
+                if not _pts_list:
+                    logger.error("  ffprobe returned no PTS values — skipping fix-timestamps")
+                else:
+                    logger.info(
+                        f"  ffprobe: {len(_pts_list)} frames; last PTS = {_pts_list[-1]:.3f}s"
+                    )
+                    _td = cm.load("tracking")
+                    _total_pts = 0
+                    for _pts_seq in _td["trajectories"].values():
+                        for _pt in _pts_seq:
+                            if _pt.frame_num < len(_pts_list):
+                                _pt.timestamp = _pts_list[_pt.frame_num]
+                                _total_pts += 1
+                    cm.save("tracking", _td)
+                    logger.info(
+                        f"  Patched {_total_pts} trajectory points with exact container PTS"
+                    )
+
+                    # Clear downstream checkpoints so pipeline rebuilds metadata with
+                    # corrected timestamps; keep embeddings — they are content-based
+                    for _ckpt in ("preprocessed_embeddings", "tracklet_metadata"):
+                        cm.delete(_ckpt)
+                    cm.delete("tracklets_indexed")
+                    logger.info("  Cleared downstream checkpoints; re-running pipeline …")
+                    run_pipeline(video_path, config_path, _skip_qdrant_precheck=True)
+                    logger.success("fix-timestamps complete")
+                    return  # pipeline re-ran; skip redundant pipeline_comps below
+
     # ── Pipeline resets ─────────────────────────────────────────────────────
     if pipeline_comps:
         for comp in pipeline_comps:
             for ckpt_name in _PIPELINE_RESET[comp]:
                 cm.delete(ckpt_name)
                 logger.info(f"  Deleted checkpoint '{ckpt_name}' for {comp}")
+
+        # If re-clustering local tracklets and tracking.pkl is gone, rebuild it
+        # from Qdrant so detection/tracking don't have to re-run.
+        if "local-clustering" in pipeline_comps and cm.has("embeddings") and not cm.has("tracking"):
+            logger.info("  tracking.pkl missing — reconstructing from Qdrant")
+            _storage = QdrantStorage(config.qdrant)
+            _storage.setup_collections()
+            if not _reconstruct_tracking_from_qdrant(cm, video_id, _storage):
+                logger.error("  Cannot reconstruct tracking data — video not found in Qdrant. Re-run the full pipeline.")
+                return
+
         logger.info("  Checkpoints cleared — resuming pipeline...")
-        run_pipeline(video_path, config_path)
+        run_pipeline(video_path, config_path, _skip_qdrant_precheck=True)
 
     logger.success("Recomputation complete")
 
