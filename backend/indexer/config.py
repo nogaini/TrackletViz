@@ -65,6 +65,7 @@ class GlobalClipsConfig:
     thumbnail_width: int = 320
     flow_width: int = 160        # target width for downscaled optical flow grid
     median_frame_width: int = 640  # target width for median frame JPEG
+    preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     umap: UMAPConfig = field(default_factory=lambda: UMAPConfig(
         n_neighbors=5, min_dist=0.05, metric="cosine", n_components=2, random_state=42
     ))
@@ -162,6 +163,7 @@ def load_config(path: str) -> AppConfig:
             pre_umap_n_neighbors=pp.get("pre_umap_n_neighbors", 15),
             pre_umap_metric=pp.get("pre_umap_metric", "cosine"),
             pre_umap_random_state=pp.get("pre_umap_random_state", 42),
+            pre_umap_min_dist=pp.get("pre_umap_min_dist", 0.0),
         ),
         umap=UMAPConfig(
             n_neighbors=u.get("n_neighbors", 15),
@@ -202,12 +204,21 @@ def load_config(path: str) -> AppConfig:
     gc = raw.get("global_clips", {})
     gcu = gc.get("umap", {})
     gch = gc.get("hdbscan", {})
+    gcpp = gc.get("preprocess", {})
     global_clips_cfg = GlobalClipsConfig(
         clip_duration=gc.get("clip_duration", 10.0),
         num_frames=gc.get("num_frames", 16),
         thumbnail_width=gc.get("thumbnail_width", 320),
         flow_width=gc.get("flow_width", 160),
         median_frame_width=gc.get("median_frame_width", 640),
+        preprocess=PreprocessConfig(
+            l2_normalize=gcpp.get("l2_normalize", False),
+            pre_umap_dims=gcpp.get("pre_umap_dims", 0),
+            pre_umap_n_neighbors=gcpp.get("pre_umap_n_neighbors", 15),
+            pre_umap_metric=gcpp.get("pre_umap_metric", "cosine"),
+            pre_umap_random_state=gcpp.get("pre_umap_random_state", 42),
+            pre_umap_min_dist=gcpp.get("pre_umap_min_dist", 0.0),
+        ),
         umap=UMAPConfig(
             n_neighbors=gcu.get("n_neighbors", 5),
             min_dist=gcu.get("min_dist", 0.05),

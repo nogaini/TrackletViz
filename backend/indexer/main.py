@@ -586,10 +586,21 @@ def run_pipeline(
         unique_gc_clusters = set()
 
     else:
+        # ── Step 17.5: Preprocess clip embeddings ─────────────────────────
+        gc_cfg = config.global_clips
+        if cm.has("gc_preprocessed_embeddings"):
+            logger.info("[17.5/21] Loaded preprocessed clip embeddings checkpoint")
+            gc_cluster_embeddings = cm.load("gc_preprocessed_embeddings")
+        else:
+            logger.info("[17.5/21] Preprocessing clip embeddings")
+            gc_cluster_embeddings = preprocess_embeddings(clip_embeddings, gc_cfg.preprocess)
+            if gc_cluster_embeddings is not clip_embeddings:
+                cm.save("gc_preprocessed_embeddings", gc_cluster_embeddings)
+
         # ── Step 18: UMAP + HDBSCAN on global clips ───────────────────────
         logger.info("[18/21] Running UMAP + HDBSCAN on global clips")
-        gc_cfg = config.global_clips
         gc_clustering_cfg = ClusteringConfig(
+            preprocess=gc_cfg.preprocess,
             umap=gc_cfg.umap,
             hdbscan=gc_cfg.hdbscan,
             fps_representatives=gc_cfg.fps_representatives,
@@ -598,7 +609,7 @@ def run_pipeline(
         gc_cluster_labels: Dict[str, int] = {}
         if len(clip_embeddings) >= 2:
             gc_clusterer = TrackletClusterer(gc_clustering_cfg)
-            gc_umap_coords, gc_cluster_labels = gc_clusterer.fit(clip_embeddings)
+            gc_umap_coords, gc_cluster_labels = gc_clusterer.fit(gc_cluster_embeddings)
         else:
             logger.info("  Fewer than 2 clips — skipping UMAP/HDBSCAN, assigning cluster_id=-1")
             for cid in clip_embeddings:
